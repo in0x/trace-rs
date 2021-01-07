@@ -7,8 +7,8 @@ pub struct Vec3 {
     z : f32
 }
 
-// TODO(phil): Define vector construction macro
-macro_rules! Vec3 {
+#[macro_export]
+macro_rules! vec3 {
     ($x: expr, $y: expr, $z: expr ) => {
         Vec3 { x: $x, y: $y, z: $z}
     };
@@ -214,18 +214,18 @@ mod test {
     fn test_vec3_dot()
     {
     {
-        let a = Vec3![1.0, 0.0, 0.0];
-        let b = Vec3![0.0, 1.0, 0.0];
+        let a = vec3![1.0, 0.0, 0.0];
+        let b = vec3![0.0, 1.0, 0.0];
         assert_eq!(a.dot(&b), 0.0);
     }
     {
-        let a = Vec3![0.0, 2.0, 0.0].normalized();
-        let b = Vec3![0.0, 2.0, 0.0].normalized();
+        let a = vec3![0.0, 2.0, 0.0].normalized();
+        let b = vec3![0.0, 2.0, 0.0].normalized();
         assert_eq!(a.dot(&b), 1.0);
     }
     {
-        let a = Vec3![0.0, 0.0,  0.45].normalized();
-        let b = Vec3![0.0, 0.0, -0.45].normalized();
+        let a = vec3![0.0, 0.0,  0.45].normalized();
+        let b = vec3![0.0, 0.0, -0.45].normalized();
 
         assert_eq!(a.dot(&b), -1.0);
     }
@@ -235,14 +235,14 @@ mod test {
     fn test_vec3_cross()
     {
     {
-        let a = Vec3![1.0, 0.0, 0.0];
-        let b = Vec3![0.0, 1.0, 0.0];
-        assert_eq!(a.cross(&b), Vec3![0.0, 0.0, 1.0]);
+        let a = vec3![1.0, 0.0, 0.0];
+        let b = vec3![0.0, 1.0, 0.0];
+        assert_eq!(a.cross(&b), vec3![0.0, 0.0, 1.0]);
     }
     {
-        let a = Vec3![1.0, 0.0, 0.0];
-        let b = Vec3![1.0, 0.0, 0.0];
-        assert_eq!(a.cross(&b), Vec3![0.0, 0.0, 0.0]);
+        let a = vec3![1.0, 0.0, 0.0];
+        let b = vec3![1.0, 0.0, 0.0];
+        assert_eq!(a.cross(&b), vec3![0.0, 0.0, 0.0]);
     }
     }
 }
