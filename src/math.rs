@@ -2,9 +2,9 @@
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Vec3 {
-    x : f32,
-    y : f32,
-    z : f32
+    pub x : f32,
+    pub y : f32,
+    pub z : f32
 }
 
 #[macro_export]
@@ -36,6 +36,18 @@ macro_rules! element_wise_binary_op {
                     x: self.x $op rhs,
                     y: self.y $op rhs,
                     z: self.z $op rhs,
+                }
+            }
+        }
+
+        impl std::ops::$trait<Vec3> for f32 {
+            type Output = Vec3;
+    
+            fn $func(self, rhs: Vec3) -> Vec3 {
+                Vec3 {
+                    x: self $op rhs.x,
+                    y: self $op rhs.y,
+                    z: self $op rhs.z,
                 }
             }
         }
@@ -83,27 +95,27 @@ impl std::ops::Neg for Vec3 {
 }
 
 impl Vec3 {
-    fn length(&self) -> f32 {
+    pub fn length(&self) -> f32 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
 
-    fn length_sq(&self) -> f32 {
+    pub fn length_sq(&self) -> f32 {
         self.x * self.x + self.y * self.y + self.z * self.z
     }
 
     // TODO(phil): Ideally I'd like to take a mut ref to self, get the len and then div_assign to self. 
     // When I tried, I ended up with horrible syntax, I think I dont understand lifetimes well enough 
     // for this yet. Come back, change and profile once I do.
-    fn normalized(&self) -> Vec3 {
+    pub fn normalized(&self) -> Vec3 {
         let inv_len = 1.0 / self.length();
         Vec3 {x: self.x * inv_len, y: self.y * inv_len, z: self.z * inv_len}
     }
 
-    fn dot(&self, b: &Vec3) -> f32 {
+    pub fn dot(&self, b: &Vec3) -> f32 {
         self.x * b.x + self.y * b.y + self.z * b.z
     }
 
-    fn cross(&self, b: &Vec3) -> Vec3 {
+    pub fn cross(&self, b: &Vec3) -> Vec3 {
         let a = self;
         Vec3 {
             x: (a.y * b.z - a.z * b.y),
