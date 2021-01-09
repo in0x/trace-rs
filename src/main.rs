@@ -1,8 +1,9 @@
 pub mod math;
 use math::*;
-use math::Vec3;
 
 extern crate image;
+extern crate rand;
+use rand::prelude::*;
 
 #[derive(Clone, Copy)]
 struct Ray {
@@ -80,6 +81,12 @@ struct Camera {
     y_extent: Vec3
 }
 
+impl Camera {
+    fn get_ray(&self, u: f32, v: f32) -> Ray {
+        Ray::new(self.eye_origin, self.lower_left + u * self.x_extent + v * self.y_extent)
+    }
+}
+
 fn hit_spheres(spheres: &[Sphere], ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
     let mut found_hit = false;
     let mut closest_t = t_max;
@@ -125,14 +132,22 @@ fn main() {
     let sphere_2 = Sphere {center: vec3![0.0, -100.5, -1.0], radius: 100.0};
     let spheres = vec![sphere_1, sphere_2];
 
+    let sample_count = 4;
+    let mut rng = rand::thread_rng();
+
     for row in 0..img_height {
         for col in 0..img_width {
-            let u = col as f32 / img_width as f32;
-            let v = 1.0 - (row as f32 / img_height as f32); // Invert v to match with output from the book.
+            let mut color = vec3![0.0, 0.0, 0.0];
 
-            let r = Ray::new(cam.eye_origin, cam.lower_left + u * cam.x_extent + v * cam.y_extent);
-            let color = sample_color(r, &spheres);
-
+            for s in 0..sample_count {
+                let (u_s, v_s) : (f32, f32) = (rng.gen(), rng.gen());
+                let u = (col as f32 + u_s) / img_width as f32;
+                let v = 1.0 - ((row as f32 + v_s) / img_height as f32);
+                let r = cam.get_ray(u, v);
+                color += sample_color(r, &spheres);
+            }
+            
+            color /= sample_count as f32;
             let write_idx = (col * pixel_components) + (row * img_width * pixel_components);
             img_buffer[write_idx] = (255.99 * color.x) as u8;
             img_buffer[write_idx + 1] = (255.99 * color.y) as u8;

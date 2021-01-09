@@ -62,7 +62,7 @@ element_wise_binary_op!(/, Div, div);
 
 macro_rules! element_wise_binary_op_assign {
     ($op: tt, $trait: ident, $func: ident) => {
-        impl std::ops::$trait<Vec3> for &mut Vec3 {
+        impl std::ops::$trait<Vec3> for Vec3 {
             fn $func(&mut self, rhs: Vec3) {
                 self.x $op rhs.x;
                 self.y $op rhs.y;
@@ -70,7 +70,7 @@ macro_rules! element_wise_binary_op_assign {
             }
         }
 
-        impl std::ops::$trait<f32> for &mut Vec3 {
+        impl  std::ops::$trait<f32> for Vec3 {
             fn $func(&mut self, rhs: f32) {
                 self.x $op rhs;
                 self.y $op rhs;
