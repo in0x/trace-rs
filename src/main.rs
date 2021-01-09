@@ -1,9 +1,10 @@
-#[macro_use]
 pub mod math;
 use math::*;
+use math::Vec3;
 
 extern crate image;
 
+#[derive(Clone, Copy)]
 struct Ray {
     origin: Vec3,
     direction: Vec3
@@ -11,11 +12,64 @@ struct Ray {
 
 impl Ray {
     fn new(origin: Vec3, direction: Vec3) -> Ray {
-        Ray { origin: origin, direction: direction }
+        Ray { origin, direction }
     }
 
     fn at(&self, t: f32) -> Vec3 {
-        return self.origin + self.direction * t;
+        self.origin + self.direction * t
+    }
+}
+
+struct HitRecord {
+    t: f32,
+    point: Vec3,
+    normal: Vec3
+}
+
+impl HitRecord {
+    fn new() -> HitRecord {
+        HitRecord { t: 0.0, point: vec3![0.0, 0.0, 0.0], normal: vec3![0.0, 0.0, 0.0]}
+    }
+}
+
+trait Hitable {
+    fn hit(&self, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool;
+}
+
+struct Sphere {
+    center: Vec3,
+    radius: f32
+}
+
+impl Hitable for Sphere {
+    fn hit(&self, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
+        let oc = ray.origin - self.center;
+        let a = dot(ray.direction, ray.direction);
+        let b = dot(oc, ray.direction);
+        let c = dot(oc, oc) - self.radius * self.radius;
+
+        let discriminant = b*b - a*c; 
+        if discriminant > 0.0 {
+            let d_root = discriminant.sqrt();
+            let t1 = (-b - d_root) / a;
+            let t2 = (-b + d_root) / a;
+
+            let (hit_t, was_hit) = match ((t1 < t_max && t1 > t_min), (t2 < t_max && t2 > t_min)) {
+                (true, false) => (t1, true),
+                (false, true) => (t2, true),
+                (true, true) =>  (t1, true),
+                _ => (0.0, false)
+            };
+
+            if was_hit {
+                out_hit.t = hit_t;
+                out_hit.point = ray.at(hit_t);
+                out_hit.normal = (out_hit.point - self.center) / self.radius;
+                return true;    
+            }
+        } 
+        
+        false            
     }
 }
 
@@ -26,17 +80,37 @@ struct Camera {
     y_extent: Vec3
 }
 
-/// Lerp between blue and white depending on magnitude of y
-fn sample_color(r: Ray) -> Vec3 {
-    let unit_dir = r.direction.normalized();
-    let t = 0.5 * (unit_dir.y + 1.0);
+fn hit_spheres(spheres: &[Sphere], ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
+    let mut found_hit = false;
+    let mut closest_t = t_max;
 
-    (1.0 - t) * vec3![1.0, 1.0, 1.0] + t * vec3![0.5, 0.7, 1.0]
+    for sphere in spheres {
+        if sphere.hit(ray, t_min, closest_t, out_hit) {
+            found_hit = true;
+            closest_t = out_hit.t;
+        }
+    }
+
+    found_hit
+}
+
+fn sample_color(r: Ray, spheres: &[Sphere]) -> Vec3 {
+    let mut hit_record = HitRecord::new();
+    
+    if hit_spheres(spheres, r, 0.0, f32::MAX, &mut hit_record) {
+        0.5 * (hit_record.normal + 1.0)
+    }
+    else {
+        let unit_dir = normalized(r.direction);
+        let t = 0.5 * (unit_dir.y + 1.0);
+
+        (1.0 - t) * vec3![1.0, 1.0, 1.0] + t * vec3![0.5, 0.7, 1.0]    
+    }
 }
 
 fn main() {
-    let img_width = 200;
-    let img_height = 100;
+    let img_width = 600;
+    let img_height = 300;
     let pixel_components = 3;
     let mut img_buffer = vec![0u8; img_width * img_height * pixel_components];
 
@@ -47,25 +121,27 @@ fn main() {
         y_extent: vec3![0.0, 2.0, 0.0]  
     };
 
+    let sphere_1 = Sphere {center: vec3![0.0, 0.0, -1.0], radius: 0.5};
+    let sphere_2 = Sphere {center: vec3![0.0, -100.5, -1.0], radius: 100.0};
+    let spheres = vec![sphere_1, sphere_2];
+
     for row in 0..img_height {
         for col in 0..img_width {
             let u = col as f32 / img_width as f32;
-            let v = row as f32 / img_height as f32;
-            
+            let v = 1.0 - (row as f32 / img_height as f32); // Invert v to match with output from the book.
+
             let r = Ray::new(cam.eye_origin, cam.lower_left + u * cam.x_extent + v * cam.y_extent);
-            let color = sample_color(r);
+            let color = sample_color(r, &spheres);
 
             let write_idx = (col * pixel_components) + (row * img_width * pixel_components);
             img_buffer[write_idx] = (255.99 * color.x) as u8;
             img_buffer[write_idx + 1] = (255.99 * color.y) as u8;
-            img_buffer[write_idx + 2] = (255.99 * color.z) as u8;            
+            img_buffer[write_idx + 2] = (255.99 * color.z) as u8;
         }
     }
 
-    let save_result = image::save_buffer("out.png", &img_buffer, 
-                                         img_width as u32, img_height as u32, image::ColorType::Rgb8);
-    match save_result {
-        Err(e) => println!("Error saving image: {}", e),
-        Ok(_) => ()
+    let save_result = image::save_buffer("out.png", &img_buffer, img_width as u32, img_height as u32, image::ColorType::Rgb8);
+    if let Err(e) = save_result {
+        println!("Error saving image: {}", e);
     }
 }

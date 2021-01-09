@@ -94,34 +94,28 @@ impl std::ops::Neg for Vec3 {
     }
 }
 
-impl Vec3 {
-    pub fn length(&self) -> f32 {
-        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
-    }
+pub fn length(v: Vec3) -> f32 {
+    (v.x * v.x + v.y * v.y + v.z * v.z).sqrt()
+}
 
-    pub fn length_sq(&self) -> f32 {
-        self.x * self.x + self.y * self.y + self.z * self.z
-    }
+pub fn length_sq(v: Vec3) -> f32 {
+    v.x * v.x + v.y * v.y + v.z * v.z
+}
 
-    // TODO(phil): Ideally I'd like to take a mut ref to self, get the len and then div_assign to self. 
-    // When I tried, I ended up with horrible syntax, I think I dont understand lifetimes well enough 
-    // for this yet. Come back, change and profile once I do.
-    pub fn normalized(&self) -> Vec3 {
-        let inv_len = 1.0 / self.length();
-        Vec3 {x: self.x * inv_len, y: self.y * inv_len, z: self.z * inv_len}
-    }
+pub fn normalized(v: Vec3) -> Vec3 {
+    let inv_len = 1.0 / length(v);
+    Vec3 {x: v.x * inv_len, y: v.y * inv_len, z: v.z * inv_len}
+}
 
-    pub fn dot(&self, b: &Vec3) -> f32 {
-        self.x * b.x + self.y * b.y + self.z * b.z
-    }
+pub fn dot(a: Vec3, b: Vec3) -> f32 {
+    a.x * b.x + a.y * b.y + a.z * b.z
+}
 
-    pub fn cross(&self, b: &Vec3) -> Vec3 {
-        let a = self;
-        Vec3 {
-            x: (a.y * b.z - a.z * b.y),
-            y: -(a.x * b.z - a.z * b.x),
-            z: (a.x * b.y - a.y * b.x)
-        }
+pub fn cross(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3 {
+        x: (a.y * b.z - a.z * b.y),
+        y: -(a.x * b.z - a.z * b.x),
+        z: (a.x * b.y - a.y * b.x)
     }
 }
 
@@ -184,11 +178,11 @@ mod test {
     fn test_vec3_length() {
     {
         let v = Vec3 {x: 1.0, y: 0.0, z: 0.0};
-        assert_eq!(v.length(), 1.0);
+        assert_eq!(length(v), 1.0);
     }
     {
         let v = Vec3 {x: 3.0, y: 3.0, z: 3.0};
-        assert_nearly_eq!(v.length(), 5.19615242270663188058);
+        assert_nearly_eq!(length(v), 5.19615242270663188058);
     }
     }
 
@@ -197,11 +191,11 @@ mod test {
     {
     {
         let v = Vec3 {x: 1.0, y: 0.0, z: 0.0};
-        assert_nearly_eq!(v.length_sq(), 1.0);
+        assert_nearly_eq!(length_sq(v), 1.0);
     }
     {
         let v = Vec3 {x: 3.0, y: 3.0, z: 3.0};
-        assert_nearly_eq!(v.length_sq(), 27.0);
+        assert_nearly_eq!(length_sq(v), 27.0);
     }
     }
 
@@ -210,15 +204,15 @@ mod test {
     {
     {
         let v = Vec3 {x: 3.0, y: 3.0, z: 3.0};
-        assert_nearly_eq!(v.normalized().length_sq(), 1.0, 0.00001);
+        assert_nearly_eq!(length_sq(normalized(v)), 1.0, 0.00001);
     }
     {
         let v = Vec3 {x: 1.0, y: 1.0, z: 1.0};
-        assert_nearly_eq!(v.normalized().length_sq(), 1.0, 0.00001);
+        assert_nearly_eq!(length_sq(normalized(v)), 1.0, 0.00001);
     }
     {
         let v = Vec3 {x: 12.2, y: 5.255, z: 3.129};
-        assert_nearly_eq!(v.normalized().length_sq(), 1.0, 0.00001);
+        assert_nearly_eq!(length_sq(normalized(v)), 1.0, 0.00001);
     }
     }
 
@@ -228,18 +222,18 @@ mod test {
     {
         let a = vec3![1.0, 0.0, 0.0];
         let b = vec3![0.0, 1.0, 0.0];
-        assert_eq!(a.dot(&b), 0.0);
+        assert_eq!(dot(a, b), 0.0);
     }
     {
-        let a = vec3![0.0, 2.0, 0.0].normalized();
-        let b = vec3![0.0, 2.0, 0.0].normalized();
-        assert_eq!(a.dot(&b), 1.0);
+        let a = normalized(vec3![0.0, 2.0, 0.0]);
+        let b = normalized(vec3![0.0, 2.0, 0.0]);
+        assert_eq!(dot(a, b), 1.0);
     }
     {
-        let a = vec3![0.0, 0.0,  0.45].normalized();
-        let b = vec3![0.0, 0.0, -0.45].normalized();
+        let a = normalized(vec3![0.0, 0.0,  0.45]);
+        let b = normalized(vec3![0.0, 0.0, -0.45]);
 
-        assert_eq!(a.dot(&b), -1.0);
+        assert_eq!(dot(a, b), -1.0);
     }
     }
 
@@ -249,12 +243,12 @@ mod test {
     {
         let a = vec3![1.0, 0.0, 0.0];
         let b = vec3![0.0, 1.0, 0.0];
-        assert_eq!(a.cross(&b), vec3![0.0, 0.0, 1.0]);
+        assert_eq!(cross(a, b), vec3![0.0, 0.0, 1.0]);
     }
     {
         let a = vec3![1.0, 0.0, 0.0];
         let b = vec3![1.0, 0.0, 0.0];
-        assert_eq!(a.cross(&b), vec3![0.0, 0.0, 0.0]);
+        assert_eq!(cross(a, b), vec3![0.0, 0.0, 0.0]);
     }
     }
 }
