@@ -1,5 +1,11 @@
 // math.rs: Provides functionality for solving linear algebra problems. 
 
+pub fn clamp(x: f32, min: f32, max: f32) -> f32 {
+    if x < min { return min; }
+    if x > max { return max; }
+    x
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Vec3 {
     pub x : f32,
@@ -11,12 +17,21 @@ impl Vec3 {
     pub fn zero() -> Vec3 {
         Vec3{ x: 0.0, y: 0.0, z: 0.0}
     }
+
+    pub fn is_near_zero(&self) -> bool {
+        let eps = 1.0e-8;
+        (self.x.abs() < eps) && (self.y.abs() < eps) && (self.z.abs() < eps) 
+    }
 }
 
 #[macro_export]
 macro_rules! vec3 {
     ($x: expr, $y: expr, $z: expr ) => {
         Vec3 { x: $x, y: $y, z: $z}
+    };
+
+    ($replicate: expr) => {
+        Vec3 {x: $replicate, y: $replicate, z: $replicate}
     };
 }
 
@@ -127,6 +142,37 @@ pub fn cross(a: Vec3, b: Vec3) -> Vec3 {
 
 pub fn reflect(v: Vec3, n: Vec3) -> Vec3 {
     v - 2.0 * dot(v,n) * n
+}
+
+pub fn refract(v: Vec3, n: Vec3, ni_over_nt: f32) -> Vec3 {
+    let cos_theta = f32::min(dot(-v, n), 1.0);
+    let r_out_perp = ni_over_nt * (v + cos_theta * n);
+    let r_out_para = n * -((1.0 - length_sq(r_out_perp)).abs().sqrt());
+    r_out_perp + r_out_para
+}
+
+pub fn rand_in_range(min: f32, max: f32) -> f32 {
+    let n_0_to_1 : f32 = rand::random();
+    min + n_0_to_1 * (max - min)
+}
+
+/// Returns a random point within a unit-radius sphere.
+pub fn rand_in_unit_sphere() -> Vec3 {
+    loop {
+        let p = vec3![rand_in_range(-1.0, 1.0), rand_in_range(-1.0, 1.0), rand_in_range(-1.0, 1.0)];
+        if length_sq(p) < 1.0 { return p };
+    }
+}
+
+pub fn rand_unit_vector() -> Vec3 {
+    normalized(rand_in_unit_sphere())
+}
+
+pub fn rand_in_unit_disk() -> Vec3 {
+    loop {
+        let p = vec3![rand_in_range(-1.0, 1.0), rand_in_range(-1.0, 1.0), 0.0];
+        if dot(p, p) < 1.0 { return p };
+    }
 }
 
 #[cfg(test)]
