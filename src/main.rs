@@ -51,6 +51,12 @@ struct Sphere {
     radius: f32
 }
 
+impl Sphere {
+    fn new(center: Vec3, radius: f32) -> Sphere {
+        Sphere { center, radius }
+    }
+}
+
 impl Hitable for Sphere {
     fn hit(&self, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
         let oc = ray.origin - self.center;
@@ -88,30 +94,44 @@ struct Camera {
     eye_origin: Vec3,
     lower_left: Vec3,
     x_extent: Vec3,
-    y_extent: Vec3
+    y_extent: Vec3,
+    u: Vec3,
+    v: Vec3,
+    w: Vec3,
+    lens_radius: f32
 }
 
 impl Camera {
-    fn new() -> Camera {
-        let aspect_ratio = 16.0 / 9.0;
-        let viewport_height = 2.0;
+    fn new(origin: Vec3, look_at: Vec3, up: Vec3, y_fov_deg: f32, aspect_ratio: f32, aperture: f32, focus_dist: f32) -> Camera {
+        let theta = degree_to_rad(y_fov_deg);
+        let h = f32::tan(theta / 2.0);
+        let viewport_height = 2.0 * h;
         let viewport_width = aspect_ratio * viewport_height;
-        let focal_length = 1.0;
+        
+        let w = normalized(origin - look_at);
+        let u = normalized(cross(up, w));
+        let v = cross(w, u);
 
-        let origin = Vec3::zero();
-        let horizontal = vec3![viewport_width, 0.0, 0.0];
-        let vertical = vec3![0.0, viewport_height, 0.0];
+        let horizontal = focus_dist * viewport_width * u;
+        let vertical = focus_dist * viewport_height * v;
 
         Camera {
             eye_origin: origin,
-            lower_left: origin - horizontal / 2.0 - vertical / 2.0 - vec3![0.0, 0.0, focal_length],
+            lower_left: origin - horizontal / 2.0 - vertical / 2.0 - focus_dist * w,
             x_extent: horizontal,
-            y_extent: vertical
+            y_extent: vertical,
+            u: u, v: v, w: w,
+            lens_radius: aperture / 2.0
         }
     }
 
-    fn get_ray(&self, u: f32, v: f32) -> Ray {
-        Ray::new(self.eye_origin, self.lower_left + u * self.x_extent + v * self.y_extent - self.eye_origin)
+    fn get_ray(&self, s: f32, t: f32) -> Ray {
+        let rd = self.lens_radius * rand_in_unit_disk();
+        let offset = self.u * rd.x + self.v * rd.y;
+
+        Ray::new(
+            self.eye_origin + offset, 
+            self.lower_left + s * self.x_extent + t * self.y_extent - self.eye_origin - offset)
     }
 }
 
@@ -203,7 +223,7 @@ struct Metal {
 
 impl Metal {
     fn new(albedo: Vec3, roughness: f32) -> Metal {
-        Metal { albedo, roughness: roughness.min(1.0) }
+        Metal { albedo, roughness: f32::min(roughness, 1.0) }
     }
 }
 
@@ -221,15 +241,28 @@ struct Dielectric {
     idx_of_refraction : f32
 }
 
+fn schlick_reflectance(cosine: f32, ref_idx: f32) -> f32 {
+    let mut r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
+    r0 = r0 * r0;
+    r0 + (1.0 - r0) * f32::powi(1.0 - cosine, 5)
+}
+
 impl Scattering for Dielectric {
     fn scatter(&self, r: &Ray, hit: &HitRecord) -> (bool, Vec3, Ray) {
-        let hit_front_face = false; // TODO(): our version doesnt have this feature yet.
-        let refraction_ratio = if hit_front_face {1.0 / self.idx_of_refraction} else { self.idx_of_refraction };
+        let refraction_ratio = if hit.front_face {1.0 / self.idx_of_refraction} else { self.idx_of_refraction };
         
         let unit_dir = normalized(r.direction);
-        let refacted = refract(unit_dir, hit.normal, refraction_ratio);
+        let cos_theta = f32::min(dot(-unit_dir, hit.normal), 1.0);
+        let sin_theta = f32::sqrt(1.0 - cos_theta * cos_theta);
 
-        (true, vec3![1.0], Ray::new(hit.point, refacted))
+        let cannot_refract = refraction_ratio * sin_theta > 1.0;
+        let should_reflect = schlick_reflectance(cos_theta, refraction_ratio) > rand::random();
+        let direction = match cannot_refract || should_reflect {
+            true => reflect(unit_dir, hit.normal),
+            false => refract(unit_dir, hit.normal, refraction_ratio)
+        };
+
+        (true, vec3![1.0], Ray::new(hit.point, direction))
     }
 }
 
@@ -254,30 +287,93 @@ struct World {
     materials: Vec<Material>
 }
 
-fn main() {
-    let mut image = RGBImage::new(600, 300);
-
-    let cam = Camera::new();
-
-    let sphere_1 = Sphere {center: vec3![0.0, 0.0, -1.0], radius: 0.5};
-    let sphere_2 = Sphere {center: vec3![0.0, -100.5, -1.0], radius: 100.0};
-    let sphere_3 = Sphere {center: vec3![1.0, 0.0, -1.0], radius: 0.5};
-    let sphere_4 = Sphere {center: vec3![-1.0, 0.0, -1.0], radius: 0.5};
-
-    let mat_1 = Lambert { albedo: vec3![0.1, 0.2, 0.5] };
-    let mat_2 = Lambert { albedo: vec3![0.8, 0.8, 0.0] };
-    let mat_3 = Metal::new(vec3![0.8, 0.6, 0.2], 0.1);
-    let mat_4 = Dielectric { idx_of_refraction: 1.5 };
-
+fn generate_world() -> World {
     let mut world = World { objects: vec![], materials: vec![] };
-    world.objects = vec![sphere_1, sphere_2, sphere_3, sphere_4];
-    world.materials = vec![
-        Material::Lambert(mat_1), 
-        Material::Lambert(mat_2), 
-        Material::Metal(mat_3), 
-        Material::Dielectric(mat_4)];
 
-    let sample_count = 8;
+    world.objects.push(Sphere::new(vec3![0.0, -1000.0, 0.0], 1000.0));
+    world.materials.push(Material::Lambert(Lambert{ albedo: vec3![0.5, 0.5, 0.5] }));
+
+    for a in -11..11 {
+        for b in -11..11 {
+            let material_select : f32 = rand::random();
+            let rand_a : f32 = rand::random();
+            let rand_b : f32 = rand::random();
+            let center = vec3![(a as f32) + 0.9 * rand_a, 0.2, (b as f32) + 0.9 * rand_b];
+            
+            if length(center - vec3![4.0, 0.2, 0.0]) > 0.9 {
+                if material_select < 0.8 {
+                    let albedo = Vec3::random() * Vec3::random();
+                    world.objects.push(Sphere::new(center, 0.2));
+                    world.materials.push(Material::Lambert(Lambert{ albedo: albedo }));
+                } else if material_select < 0.96 {
+                    let albedo = Vec3::random_range(0.5, 1.0);
+                    let rough = rand_in_range(0.0, 0.5);
+                    world.objects.push(Sphere::new(center, 0.2));
+                    world.materials.push(Material::Metal(Metal {albedo: albedo, roughness: rough}));
+                } else {
+                    world.objects.push(Sphere::new(center, 0.2));
+                    world.materials.push(Material::Dielectric(Dielectric{ idx_of_refraction: 1.5 }));
+                }
+            }
+        }
+    }
+
+    world.objects.push(Sphere::new(vec3![0.0, 1.0, 0.0], 1.0));
+    world.materials.push(Material::Dielectric(Dielectric{ idx_of_refraction: 1.5 }));
+
+    world.objects.push(Sphere::new(vec3![-4.0, 1.0, 0.0], 1.0));
+    world.materials.push(Material::Lambert(Lambert{ albedo: vec3![0.4, 0.2, 0.1] }));
+
+    world.objects.push(Sphere::new(vec3![4.0, 1.0, 0.0], 1.0));
+    world.materials.push(Material::Metal(Metal{ albedo: vec3![0.7, 0.6, 0.5], roughness: 0.0 }));
+
+    world
+}
+
+fn main() {
+    let aspect_ratio = 3.0 / 2.0;
+    let origin = vec3![13.0, 2.0, 3.0];
+    let look_at = vec3![0.0, 0.0, 0.0];
+    let up = vec3![0.0, 1.0, 0.0];
+
+    let cam = Camera::new(
+        origin,
+        look_at,
+        up,
+        20.0, 
+        aspect_ratio,
+        0.1,
+        10.0
+    );
+
+    let pixels_x = 1200_usize;
+    let pixels_y = (pixels_x as f32 / aspect_ratio) as usize;
+    let mut image = RGBImage::new(pixels_x, pixels_y);
+
+    // let sphere_1 = Sphere {center: vec3![ 0.0, 0.0, -1.0], radius: 0.5};
+    // let sphere_2 = Sphere {center: vec3![ 0.0, -100.5, -1.0], radius: 100.0};
+    // let sphere_3 = Sphere {center: vec3![ 1.0, 0.0, -1.0], radius: 0.5};
+    // let sphere_4 = Sphere {center: vec3![-1.0, 0.0, -1.0], radius: -0.45};
+    // let sphere_5 = Sphere {center: vec3![-1.0, 0.0, -1.0], radius: 0.5};
+
+    // let mat_1 = Lambert { albedo: vec3![0.1, 0.2, 0.5] };
+    // let mat_2 = Lambert { albedo: vec3![0.8, 0.8, 0.0] };
+    // let mat_3 = Metal::new(vec3![0.8, 0.6, 0.2], 0.0);
+    // let mat_4 = Dielectric { idx_of_refraction: 1.5 };
+    // let mat_5 = Dielectric { idx_of_refraction: 1.5 };
+
+    // let mut world = World { objects: vec![], materials: vec![] };
+    // world.objects = vec![sphere_1, sphere_2, sphere_3, sphere_4, sphere_5];
+    // world.materials = vec![
+    //     Material::Lambert(mat_1), 
+    //     Material::Lambert(mat_2), 
+    //     Material::Metal(mat_3), 
+    //     Material::Dielectric(mat_4),
+    //     Material::Dielectric(mat_5)];
+
+    let world = generate_world();
+
+    let sample_count = 32;
 
     for row in 0..image.height {
         for col in 0..image.width {

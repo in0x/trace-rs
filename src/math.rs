@@ -6,6 +6,19 @@ pub fn clamp(x: f32, min: f32, max: f32) -> f32 {
     x
 }
 
+pub fn rad_to_degree(rad: f32) -> f32 {
+    rad * (180.0 / std::f32::consts::PI)
+}
+
+pub fn degree_to_rad(degrees: f32) -> f32 {
+    degrees * (std::f32::consts::PI / 180.0)
+}
+
+pub fn rand_in_range(min: f32, max: f32) -> f32 {
+    let n_0_to_1 : f32 = rand::random();
+    min + n_0_to_1 * (max - min)
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Vec3 {
     pub x : f32,
@@ -21,6 +34,14 @@ impl Vec3 {
     pub fn is_near_zero(&self) -> bool {
         let eps = 1.0e-8;
         (self.x.abs() < eps) && (self.y.abs() < eps) && (self.z.abs() < eps) 
+    }
+
+    pub fn random() -> Vec3 {
+        Vec3 { x: rand::random(), y: rand::random(), z: rand::random() }
+    }
+
+    pub fn random_range(min: f32, max: f32) -> Vec3 {
+        Vec3 { x: rand_in_range(min, max), y: rand_in_range(min, max), z: rand_in_range(min, max) }
     }
 }
 
@@ -147,13 +168,8 @@ pub fn reflect(v: Vec3, n: Vec3) -> Vec3 {
 pub fn refract(v: Vec3, n: Vec3, ni_over_nt: f32) -> Vec3 {
     let cos_theta = f32::min(dot(-v, n), 1.0);
     let r_out_perp = ni_over_nt * (v + cos_theta * n);
-    let r_out_para = n * -((1.0 - length_sq(r_out_perp)).abs().sqrt());
+    let r_out_para = -((1.0 - length_sq(r_out_perp)).abs().sqrt()) * n;
     r_out_perp + r_out_para
-}
-
-pub fn rand_in_range(min: f32, max: f32) -> f32 {
-    let n_0_to_1 : f32 = rand::random();
-    min + n_0_to_1 * (max - min)
 }
 
 /// Returns a random point within a unit-radius sphere.
@@ -171,7 +187,7 @@ pub fn rand_unit_vector() -> Vec3 {
 pub fn rand_in_unit_disk() -> Vec3 {
     loop {
         let p = vec3![rand_in_range(-1.0, 1.0), rand_in_range(-1.0, 1.0), 0.0];
-        if dot(p, p) < 1.0 { return p };
+        if length_sq(p) < 1.0 { return p };
     }
 }
 
