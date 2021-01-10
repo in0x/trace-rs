@@ -1,5 +1,6 @@
 pub mod math;
 use math::*;
+use std::time::Instant;
 
 extern crate image;
 extern crate rand;
@@ -160,19 +161,24 @@ fn sample_color(r: Ray, world: &World, bounces: i32) -> Vec3 {
     let mut hit = HitRecord::new();
     let mut hit_id = 0;
 
-    if hit_spheres(&world.objects, r, 0.001, f32::MAX, &mut hit, &mut hit_id) {
-        hit.normal = normalized(hit.normal); // The book makes a point about unit length normals but then doesnt enforce it.
-        if bounces > 0 {
-            let (did_bounce, attenuation, scattered) = world.materials[hit_id].scatter(&r, &hit);
+    let mut color = vec3![1.0, 1.0, 1.0];
+    let mut current_ray = r;
+
+    for _bounce in 0..bounces {
+        if hit_spheres(&world.objects, current_ray, 0.001, f32::MAX, &mut hit, &mut hit_id) {
+            hit.normal = normalized(hit.normal); // The book makes a point about unit length normals but then doesnt enforce it.
+            let (did_bounce, attenuation, scattered) = world.materials[hit_id].scatter(&current_ray, &hit);
             if did_bounce {
-                return attenuation * sample_color(scattered, &world, bounces - 1);
+                current_ray = scattered;
+                color *= attenuation;
             }
+        } else {
+            color *= get_sky_color(current_ray);
+            break;
         }
-        Vec3::zero()
     }
-    else {
-        get_sky_color(r)
-    }
+
+    color
 }
 
 struct RGBImage {
@@ -337,43 +343,20 @@ fn main() {
     let up = vec3![0.0, 1.0, 0.0];
 
     let cam = Camera::new(
-        origin,
-        look_at,
-        up,
-        20.0, 
-        aspect_ratio,
-        0.1,
-        10.0
+        origin, look_at, up,
+        20.0, aspect_ratio,
+        0.1, 10.0
     );
 
-    let pixels_x = 1200_usize;
+    let pixels_x = 600_usize;
     let pixels_y = (pixels_x as f32 / aspect_ratio) as usize;
     let mut image = RGBImage::new(pixels_x, pixels_y);
 
-    // let sphere_1 = Sphere {center: vec3![ 0.0, 0.0, -1.0], radius: 0.5};
-    // let sphere_2 = Sphere {center: vec3![ 0.0, -100.5, -1.0], radius: 100.0};
-    // let sphere_3 = Sphere {center: vec3![ 1.0, 0.0, -1.0], radius: 0.5};
-    // let sphere_4 = Sphere {center: vec3![-1.0, 0.0, -1.0], radius: -0.45};
-    // let sphere_5 = Sphere {center: vec3![-1.0, 0.0, -1.0], radius: 0.5};
-
-    // let mat_1 = Lambert { albedo: vec3![0.1, 0.2, 0.5] };
-    // let mat_2 = Lambert { albedo: vec3![0.8, 0.8, 0.0] };
-    // let mat_3 = Metal::new(vec3![0.8, 0.6, 0.2], 0.0);
-    // let mat_4 = Dielectric { idx_of_refraction: 1.5 };
-    // let mat_5 = Dielectric { idx_of_refraction: 1.5 };
-
-    // let mut world = World { objects: vec![], materials: vec![] };
-    // world.objects = vec![sphere_1, sphere_2, sphere_3, sphere_4, sphere_5];
-    // world.materials = vec![
-    //     Material::Lambert(mat_1), 
-    //     Material::Lambert(mat_2), 
-    //     Material::Metal(mat_3), 
-    //     Material::Dielectric(mat_4),
-    //     Material::Dielectric(mat_5)];
-
     let world = generate_world();
+    let sample_count = 8;
 
-    let sample_count = 32;
+    println!("Finished setup. Begin rendering...");
+    let start_time = Instant::now();
 
     for row in 0..image.height {
         for col in 0..image.width {
@@ -394,6 +377,12 @@ fn main() {
             image.set_pixel(row, col, color);
         }
     }
+
+    let end_time = Instant::now();
+    let render_duration = end_time - start_time;
+
+    println!("Finished rendering. Time elapsed: {} seconds.", render_duration.as_secs());
+    println!("Saving result to out.png");
 
     let save_result = image::save_buffer("out.png", &image.buffer, image.width as u32, image.height as u32, image::ColorType::Rgb8);
     if let Err(e) = save_result {
