@@ -1,4 +1,9 @@
 // math.rs: Provides functionality for solving linear algebra problems. 
+use random_fast_rng::{Random};
+
+pub fn rand_f32() -> f32 {
+    random_fast_rng::local_rng().gen()
+}
 
 pub fn clamp(x: f32, min: f32, max: f32) -> f32 {
     if x < min { return min; }
@@ -15,7 +20,7 @@ pub fn degree_to_rad(degrees: f32) -> f32 {
 }
 
 pub fn rand_in_range(min: f32, max: f32) -> f32 {
-    let n_0_to_1 : f32 = rand::random();
+    let n_0_to_1 : f32 = rand_f32();
     min + n_0_to_1 * (max - min)
 }
 
@@ -37,7 +42,7 @@ impl Vec3 {
     }
 
     pub fn random() -> Vec3 {
-        Vec3 { x: rand::random(), y: rand::random(), z: rand::random() }
+        Vec3 { x: rand_f32(), y: rand_f32(), z: rand_f32() }
     }
 
     pub fn random_range(min: f32, max: f32) -> Vec3 {

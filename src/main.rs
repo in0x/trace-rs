@@ -4,6 +4,7 @@ use std::time::Instant;
 
 extern crate image;
 extern crate rand;
+extern crate random_fast_rng;
 
 #[derive(Clone, Copy)]
 struct Ray {
@@ -58,37 +59,232 @@ impl Sphere {
     }
 }
 
-impl Hitable for Sphere {
-    fn hit(&self, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
-        let oc = ray.origin - self.center;
-        let a = dot(ray.direction, ray.direction);
-        let b = dot(oc, ray.direction);
-        let c = dot(oc, oc) - self.radius * self.radius;
+use std::arch::x86_64::*;
 
-        let discriminant = b*b - a*c; 
-        if discriminant > 0.0 {
-            let d_root = discriminant.sqrt();
-            let t1 = (-b - d_root) / a;
-            let t2 = (-b + d_root) / a;
+// fn set_ps(v: &Vec3) -> __m128 {
+//     _mm_set_ps(v.x, v.y, v.z, 0.0)
+// }
 
-            let (hit_t, was_hit) = match ((t1 < t_max && t1 > t_min), (t2 < t_max && t2 > t_min)) {
-                (true, false) => (t1, true),
-                (false, true) => (t2, true),
-                (true, true) =>  (t1, true),
-                _ => (0.0, false)
-            };
+// fn dot_simd(a: __m128, b: __m128) -> __m128 {
+//     let dot = _mm_mul_ps(a, b);
+//     dot = _mm_hadd_ps(dot, dot);
+//     _mm_hadd_ps(dot, dot)
+// }
 
-            if was_hit {
-                out_hit.t = hit_t;
-                out_hit.point = ray.at(hit_t);
-                let outward_normal = (out_hit.point - self.center) / self.radius;
-                out_hit.set_face_and_normal(ray, outward_normal);
-                return true;    
+// Calculates the three dimensional dot product
+// for the for vectors stored in each channel.
+fn dot_4(
+	x_1: __m128, y_1: __m128, z_1: __m128,
+    x_2: __m128, y_2: __m128, z_2: __m128)
+    -> __m128
+{
+	unsafe {
+        let dot_x_2 = _mm_mul_ps(x_1, x_2);
+        let dot_y_2 = _mm_mul_ps(y_1, y_2);
+        let dot_z_2 = _mm_mul_ps(z_1, z_2);
+        let dot_sum = _mm_add_ps(dot_x_2, dot_y_2);
+        _mm_add_ps(dot_sum, dot_z_2)
+    }
+}
+
+fn get_at_i(m: __m128, i: i32) -> f32
+{
+    unsafe {
+    	let shuff_mask = _mm_cvtsi32_si128(i);
+	    _mm_cvtss_f32(_mm_permutevar_ps(m, shuff_mask))
+    }
+}
+
+struct SimdRay {
+    origin_x : __m128,
+	origin_y : __m128,
+	origin_z : __m128,
+	direction_x : __m128,
+	direction_y : __m128,
+    direction_z : __m128,    
+}
+
+impl SimdRay {
+    fn new(ray: Ray) -> SimdRay {
+        unsafe {
+            SimdRay {
+                origin_x: _mm_set_ps1(ray.origin.x),
+                origin_y: _mm_set_ps1(ray.origin.y),
+                origin_z: _mm_set_ps1(ray.origin.z),
+                direction_x: _mm_set_ps1(ray.direction.x),
+                direction_y: _mm_set_ps1(ray.direction.y),
+                direction_z: _mm_set_ps1(ray.direction.z),        
             }
         }
-
-        false            
     }
+}
+
+fn hit_simd(world: &World, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> (bool, usize) {
+    unsafe {
+    let simd_ray = SimdRay::new(ray);
+    let zero = _mm_set_ps1(0.0); 
+	let a = _mm_set_ps1(dot(ray.direction, ray.direction));
+
+    let mut found_hit = false;
+    let mut hit_sphere_idx = 0;
+    let mut t_closest = t_max;
+
+    let sphere_count = world.sphere_x.len() - (world.sphere_x.len() % 4) ;
+    for i in (0..sphere_count).step_by(4) {
+    //  world.sphere_x.chunks(4).for_each(|step| {
+        let position_x = _mm_loadu_ps(&world.sphere_x[i]);
+        let position_y = _mm_loadu_ps(&world.sphere_y[i]);
+        let position_z = _mm_loadu_ps(&world.sphere_z[i]);
+        let radii = _mm_loadu_ps(&world.sphere_r[i]);
+    
+        let to_center_x = _mm_sub_ps(simd_ray.origin_x, position_x);
+        let to_center_y = _mm_sub_ps(simd_ray.origin_y, position_y);
+        let to_center_z = _mm_sub_ps(simd_ray.origin_z, position_z);
+    
+        // This contains the b for 4 spheres, x => b for spheres[i], x => b for spheres[i + 1] etc
+        let b = dot_4(
+            to_center_x, to_center_y, to_center_z, 
+            simd_ray.direction_x, simd_ray.direction_y, simd_ray.direction_z);
+    
+        let mut c = dot_4(to_center_x, to_center_y, to_center_z, to_center_x, to_center_y, to_center_z);
+        c = _mm_sub_ps(c, _mm_mul_ps(radii, radii));
+        
+        let discriminants = _mm_sub_ps(_mm_mul_ps(b, b), _mm_mul_ps(a, c));
+        let mask = _mm_cmpge_ps(discriminants, zero);
+        let sqrts = _mm_and_ps(mask, _mm_sqrt_ps(discriminants));
+    
+        let b_neg = _mm_sub_ps(zero, b);
+        let t_neg = _mm_div_ps(_mm_sub_ps(b_neg, sqrts), a);
+        let t_pos = _mm_div_ps(_mm_add_ps(b_neg, sqrts), a);
+    
+        let mut discriminant_results: [f32;4] = [0.0, 0.0, 0.0, 0.0];
+        _mm_storeu_ps(&mut discriminant_results[0], discriminants);
+    
+        let mut t_results_pos: [f32;4] = [0.0, 0.0, 0.0, 0.0];
+        let mut t_results_neg: [f32;4] = [0.0, 0.0, 0.0, 0.0];
+        _mm_storeu_ps(&mut t_results_pos[0], t_pos);
+        _mm_storeu_ps(&mut t_results_neg[0], t_neg);
+    
+        for test_idx in 0..4_ {
+            if discriminant_results[test_idx] <= 0.0 {
+                continue;
+            }
+    
+            let t_test_neg = t_results_neg[test_idx];
+            let t_test_pos = t_results_pos[test_idx];
+    
+            if t_test_neg > t_min && t_test_neg < t_closest {
+                let sphere_pos = vec3![
+                    world.sphere_x[(test_idx) + i],
+                    world.sphere_y[(test_idx) + i],
+                    world.sphere_z[(test_idx) + i]
+                ]; 
+
+                let radius =  world.sphere_r[(test_idx) + i];
+    
+                out_hit.t = t_test_neg;
+                out_hit.point = ray.at(t_test_neg);
+                out_hit.normal = (out_hit.point - sphere_pos) / radius;
+                out_hit.set_face_and_normal(ray, out_hit.normal);
+                hit_sphere_idx = i + test_idx;
+                t_closest = t_test_neg;
+                found_hit = true;
+            }
+            else if t_test_pos > t_min && t_test_pos < t_closest {
+                let sphere_pos = vec3![
+                    world.sphere_x[(test_idx) + i],
+                    world.sphere_y[(test_idx) + i],
+                    world.sphere_z[(test_idx) + i]
+                ]; 
+
+                let radius =  world.sphere_r[(test_idx) + i];
+    
+                out_hit.t = t_test_pos;
+                out_hit.point = ray.at(t_test_pos);
+                out_hit.normal = (out_hit.point - sphere_pos) / radius;
+                out_hit.set_face_and_normal(ray, out_hit.normal);
+                hit_sphere_idx = i + test_idx;
+                t_closest = t_test_pos;
+                found_hit = true;
+            }
+        }
+    }
+   
+    (found_hit, hit_sphere_idx)
+    }
+}
+
+fn hit(world: &World, idx: usize, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
+    let center = vec3![world.sphere_x[idx], world.sphere_y[idx], world.sphere_z[idx]];
+    let radius = world.sphere_r[idx];
+
+    let oc = ray.origin - center;
+    let a = dot(ray.direction, ray.direction);
+    let b = dot(oc, ray.direction);
+    let c = dot(oc, oc) - radius * radius;
+
+    let discriminant = b*b - a*c; 
+    if discriminant > 0.0 {
+        let d_root = discriminant.sqrt();
+        let t1 = (-b - d_root) / a;
+        let t2 = (-b + d_root) / a;
+
+        let (hit_t, was_hit) = match ((t1 < t_max && t1 > t_min), (t2 < t_max && t2 > t_min)) {
+            (true, false) => (t1, true),
+            (false, true) => (t2, true),
+            (true, true) =>  (t1, true),
+            _ => (0.0, false)
+        };
+
+        if was_hit {
+            out_hit.t = hit_t;
+            out_hit.point = ray.at(hit_t);
+            let outward_normal = (out_hit.point - center) / radius;
+            out_hit.set_face_and_normal(ray, outward_normal);
+            return true;    
+        }
+    }
+
+    false            
+}
+
+// fn hit_spheres(world: &World, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord, hit_id: &mut usize) -> bool {
+//     let mut found_hit = false;
+//     let mut closest_t = t_max;
+
+//     for i in 0..world.sphere_x.len() {
+//         if hit(world, i, ray, t_min, closest_t, out_hit) {
+//             found_hit = true;
+//             closest_t = out_hit.t;
+//             *hit_id = i;
+//         }
+//     }
+
+//     found_hit
+// }
+
+fn hit_spheres(world: &World, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord, hit_id: &mut usize) -> bool {
+    let mut found_hit = false;
+    let mut closest_t = t_max;
+
+    let (did_hit, id) = hit_simd(world, ray, t_min, closest_t, out_hit);
+    if did_hit {
+        found_hit = true;
+        closest_t = out_hit.t;
+        *hit_id = id;
+    }
+
+    let spheres_remaining = world.sphere_x.len() % 4;
+
+    for i in spheres_remaining..world.sphere_x.len() {
+        if hit(world, i, ray, t_min, closest_t, out_hit) {
+            found_hit = true;
+            closest_t = out_hit.t;
+            *hit_id = i;
+        }
+    }
+
+    found_hit
 }
 
 struct Camera {
@@ -136,21 +332,6 @@ impl Camera {
     }
 }
 
-fn hit_spheres(spheres: &[Sphere], ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord, hit_id: &mut usize) -> bool {
-    let mut found_hit = false;
-    let mut closest_t = t_max;
-
-    for (i, sphere) in spheres.iter().enumerate() {
-        if sphere.hit(ray, t_min, closest_t, out_hit) {
-            found_hit = true;
-            closest_t = out_hit.t;
-            *hit_id = i;
-        }
-    }
-
-    found_hit
-}
-
 fn get_sky_color(r: Ray) -> Vec3 {
     let unit_dir = normalized(r.direction);
     let t = 0.5 * (unit_dir.y + 1.0);
@@ -165,7 +346,7 @@ fn sample_color(r: Ray, world: &World, bounces: i32) -> Vec3 {
     let mut current_ray = r;
 
     for _bounce in 0..bounces {
-        if hit_spheres(&world.objects, current_ray, 0.001, f32::MAX, &mut hit, &mut hit_id) {
+        if hit_spheres(&world, current_ray, 0.001, f32::MAX, &mut hit, &mut hit_id) {
             hit.normal = normalized(hit.normal); // The book makes a point about unit length normals but then doesnt enforce it.
             let (did_bounce, attenuation, scattered) = world.materials[hit_id].scatter(&current_ray, &hit);
             if did_bounce {
@@ -262,7 +443,7 @@ impl Scattering for Dielectric {
         let sin_theta = f32::sqrt(1.0 - cos_theta * cos_theta);
 
         let cannot_refract = refraction_ratio * sin_theta > 1.0;
-        let should_reflect = schlick_reflectance(cos_theta, refraction_ratio) > rand::random();
+        let should_reflect = schlick_reflectance(cos_theta, refraction_ratio) > rand_f32();
         let direction = match cannot_refract || should_reflect {
             true => reflect(unit_dir, hit.normal),
             false => refract(unit_dir, hit.normal, refraction_ratio)
@@ -289,14 +470,36 @@ impl Scattering for Material {
 }
 
 struct World {
-    objects: Vec<Sphere>,
+    sphere_x: Vec<f32>,
+    sphere_y: Vec<f32>,
+    sphere_z: Vec<f32>,
+    sphere_r: Vec<f32>,
     materials: Vec<Material>
 }
 
-fn generate_world() -> World {
-    let mut world = World { objects: vec![], materials: vec![] };
+impl World {
+    fn new() -> World {
+        World {
+            sphere_x: vec![],
+            sphere_y: vec![],
+            sphere_z: vec![],
+            sphere_r: vec![],
+            materials: vec![]
+        }
+    }
 
-    world.objects.push(Sphere::new(vec3![0.0, -1000.0, 0.0], 1000.0));
+    fn push_sphere(&mut self, center: Vec3, radius: f32) {
+        self.sphere_x.push(center.x);
+        self.sphere_y.push(center.y);
+        self.sphere_z.push(center.z);
+        self.sphere_r.push(radius);
+    }
+}
+
+fn generate_world() -> World {
+    let mut world = World::new();
+
+    world.push_sphere(vec3![0.0, -1000.0, 0.0], 1000.0);
     world.materials.push(Material::Lambert(Lambert{ albedo: vec3![0.5, 0.5, 0.5] }));
 
     for a in -11..11 {
@@ -309,28 +512,28 @@ fn generate_world() -> World {
             if length(center - vec3![4.0, 0.2, 0.0]) > 0.9 {
                 if material_select < 0.8 {
                     let albedo = Vec3::random() * Vec3::random();
-                    world.objects.push(Sphere::new(center, 0.2));
+                    world.push_sphere(center, 0.2);
                     world.materials.push(Material::Lambert(Lambert{ albedo: albedo }));
                 } else if material_select < 0.96 {
                     let albedo = Vec3::random_range(0.5, 1.0);
                     let rough = rand_in_range(0.0, 0.5);
-                    world.objects.push(Sphere::new(center, 0.2));
+                    world.push_sphere(center, 0.2);
                     world.materials.push(Material::Metal(Metal {albedo: albedo, roughness: rough}));
                 } else {
-                    world.objects.push(Sphere::new(center, 0.2));
+                    world.push_sphere(center, 0.2);
                     world.materials.push(Material::Dielectric(Dielectric{ idx_of_refraction: 1.5 }));
                 }
             }
         }
     }
 
-    world.objects.push(Sphere::new(vec3![0.0, 1.0, 0.0], 1.0));
+    world.push_sphere(vec3![0.0, 1.0, 0.0], 1.0);
     world.materials.push(Material::Dielectric(Dielectric{ idx_of_refraction: 1.5 }));
 
-    world.objects.push(Sphere::new(vec3![-4.0, 1.0, 0.0], 1.0));
+    world.push_sphere(vec3![-4.0, 1.0, 0.0], 1.0);
     world.materials.push(Material::Lambert(Lambert{ albedo: vec3![0.4, 0.2, 0.1] }));
 
-    world.objects.push(Sphere::new(vec3![4.0, 1.0, 0.0], 1.0));
+    world.push_sphere(vec3![4.0, 1.0, 0.0], 1.0);
     world.materials.push(Material::Metal(Metal{ albedo: vec3![0.7, 0.6, 0.5], roughness: 0.0 }));
 
     world
@@ -353,7 +556,7 @@ fn main() {
     let mut image = RGBImage::new(pixels_x, pixels_y);
 
     let world = generate_world();
-    let sample_count = 8;
+    let sample_count = 16;
 
     println!("Finished setup. Begin rendering...");
     let start_time = Instant::now();
@@ -362,7 +565,7 @@ fn main() {
         for col in 0..image.width {
             let mut color = vec3![0.0, 0.0, 0.0];
             for _s in 0..sample_count {
-                let (u_s, v_s) : (f32, f32) = (rand::random(), rand::random());
+                let (u_s, v_s) : (f32, f32) = (rand_f32(), rand_f32());
                 let u = (col as f32 + u_s) / image.width as f32;
                 let v = 1.0 - ((row as f32 + v_s) / image.height as f32); // Invert y to align with output from the book.
                 let r = cam.get_ray(u, v);
