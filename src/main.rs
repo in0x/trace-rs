@@ -254,7 +254,7 @@ impl Camera {
             lower_left: origin - horizontal / 2.0 - vertical / 2.0 - focus_dist * w,
             x_extent: horizontal,
             y_extent: vertical,
-            u: u, v: v,
+            u, v,
             lens_radius: aperture / 2.0
         }
     }
@@ -454,7 +454,7 @@ fn generate_world() -> World {
                 if material_select < 0.8 {
                     let albedo = Vec3::random() * Vec3::random();
                     world.push_sphere(center, 0.2);
-                    world.materials.push(Material::Lambert(Lambert{ albedo: albedo }));
+                    world.materials.push(Material::Lambert(Lambert{ albedo }));
                 } else if material_select < 0.96 {
                     let albedo = Vec3::random_range(0.5, 1.0);
                     let rough = rand_in_range(0.0, 0.5);
