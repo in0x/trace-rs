@@ -1,10 +1,54 @@
 pub mod math;
 use math::*;
 use std::time::Instant;
+use std::arch::x86_64::*;
 
 extern crate image;
-extern crate rand;
 extern crate random_fast_rng;
+
+struct Camera {
+    eye_origin: Vec3,
+    lower_left: Vec3,
+    x_extent: Vec3,
+    y_extent: Vec3,
+    u: Vec3,
+    v: Vec3,
+    lens_radius: f32
+}
+
+impl Camera {
+    fn new(origin: Vec3, look_at: Vec3, up: Vec3, y_fov_deg: f32, aspect_ratio: f32, aperture: f32, focus_dist: f32) -> Camera {
+        let theta = degree_to_rad(y_fov_deg);
+        let h = f32::tan(theta / 2.0);
+        let viewport_height = 2.0 * h;
+        let viewport_width = aspect_ratio * viewport_height;
+        
+        let w = normalized(origin - look_at);
+        let u = normalized(cross(up, w));
+        let v = cross(w, u);
+
+        let horizontal = focus_dist * viewport_width * u;
+        let vertical = focus_dist * viewport_height * v;
+
+        Camera {
+            eye_origin: origin,
+            lower_left: origin - horizontal / 2.0 - vertical / 2.0 - focus_dist * w,
+            x_extent: horizontal,
+            y_extent: vertical,
+            u, v,
+            lens_radius: aperture / 2.0
+        }
+    }
+
+    fn get_ray(&self, s: f32, t: f32) -> Ray {
+        let rd = self.lens_radius * rand_in_unit_disk();
+        let offset = self.u * rd.x + self.v * rd.y;
+
+        Ray::new(
+            self.eye_origin + offset, 
+            self.lower_left + s * self.x_extent + t * self.y_extent - self.eye_origin - offset)
+    }
+}
 
 #[derive(Clone, Copy)]
 struct Ray {
@@ -23,15 +67,16 @@ impl Ray {
 }
 
 struct HitRecord {
-    t: f32,
     point: Vec3,
     normal: Vec3,
+    t: f32,
+    obj_id: usize,
     front_face: bool
 }
 
 impl HitRecord {
     fn new() -> HitRecord {
-        HitRecord { t: 0.0, point: vec3![0.0, 0.0, 0.0], normal: vec3![0.0, 0.0, 0.0], front_face: false}
+        HitRecord { point: vec3![0.0, 0.0, 0.0], normal: vec3![0.0, 0.0, 0.0], t: 0.0, obj_id: 0, front_face: false}
     }
     
     fn set_face_and_normal(&mut self, r: Ray, outward_normal: Vec3) {
@@ -43,8 +88,6 @@ impl HitRecord {
 trait Hitable {
     fn hit(&self, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool;
 }
-
-use std::arch::x86_64::*;
 
 macro_rules! MY_MM_SHUFFLE {
     ($fp3: expr, $fp2: expr, $fp1: expr, $fp0: expr) => {
@@ -78,7 +121,7 @@ fn hmin(mut m: __m128) -> f32 {
     }
 }
 
-fn hit_simd(world: &World, r: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> (bool, usize) {
+fn hit_simd(world: &World, r: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
 unsafe {
     let ro_x = _mm_set_ps1(r.origin.x);
     let ro_y = _mm_set_ps1(r.origin.y);
@@ -160,113 +203,82 @@ unsafe {
             out_hit.normal = (out_hit.point - world.sphere_center(hit_id)) / world.sphere_r[hit_id];
             out_hit.set_face_and_normal(r, out_hit.normal);
             out_hit.t = final_t;
-
-            return (true, hit_id as usize);
+            out_hit.obj_id = hit_id as usize;
+            return true;
         }
+    }}
+    
+    return false;
+}
+
+fn hit(world: &World, idx_first: usize, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
+    let mut closest_t = t_max;
+    let mut hit_id = -1;
+
+    let num_spheres = world.sphere_x.len();
+    for i in idx_first..num_spheres {
+        let center = world.sphere_center(i);
+        let radius = world.sphere_r[i];
+
+        let oc = ray.origin - center;
+        let a = dot(ray.direction, ray.direction);
+        let b = dot(oc, ray.direction);
+        let c = dot(oc, oc) - radius * radius;
+
+        let discriminant = b*b - a*c; 
+        if discriminant > 0.0 {
+            let d_root = discriminant.sqrt();
+            let t1 = (-b - d_root) / a;
+            let t2 = (-b + d_root) / a;
+
+            // let (hit_t, was_hit) = match ((t1 < t_max && t1 > t_min), (t2 < t_max && t2 > t_min)) {
+            //     (true, false) => (t1, true),
+            //     (false, true) => (t2, true),
+            //     (true, true) =>  (t1, true),
+            //     _ => (0.0, false)
+            // };
+            if t1 < closest_t && t1 > t_min {
+                closest_t = t1;
+                hit_id = i as i32;
+            } 
+            else if t2 < closest_t && t2 > t_min {
+                closest_t = t2;
+                hit_id = i as i32;
+            }
+        }       
+    }
+    
+    if hit_id != -1 {
+        let center = world.sphere_center(hit_id as usize);
+        let radius = world.sphere_r[hit_id as usize];
+
+        out_hit.t = closest_t;
+        out_hit.obj_id = hit_id as usize;
+        out_hit.point = ray.at(closest_t);
+        let outward_normal = (out_hit.point - center) / radius;
+        out_hit.set_face_and_normal(ray, outward_normal);
+        return true;    
+    } 
+    else {
+        return false;
     }
 }
-    (false, 0)
-}
 
-fn hit(world: &World, idx: usize, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
-    let center = world.sphere_center(idx);
-    let radius = world.sphere_r[idx];
-
-    let oc = ray.origin - center;
-    let a = dot(ray.direction, ray.direction);
-    let b = dot(oc, ray.direction);
-    let c = dot(oc, oc) - radius * radius;
-
-    let discriminant = b*b - a*c; 
-    if discriminant > 0.0 {
-        let d_root = discriminant.sqrt();
-        let t1 = (-b - d_root) / a;
-        let t2 = (-b + d_root) / a;
-
-        let (hit_t, was_hit) = match ((t1 < t_max && t1 > t_min), (t2 < t_max && t2 > t_min)) {
-            (true, false) => (t1, true),
-            (false, true) => (t2, true),
-            (true, true) =>  (t1, true),
-            _ => (0.0, false)
-        };
-
-        if was_hit {
-            out_hit.t = hit_t;
-            out_hit.point = ray.at(hit_t);
-            let outward_normal = (out_hit.point - center) / radius;
-            out_hit.set_face_and_normal(ray, outward_normal);
-            return true;    
-        }
-    }
-
-    false            
-}
-
-fn hit_spheres(world: &World, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord, hit_id: &mut usize) -> bool {
+fn hit_spheres(world: &World, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
     let mut found_hit = false;
     let mut closest_t = t_max;
 
-    let (did_hit, id) = hit_simd(world, ray, t_min, closest_t, out_hit);
-    if did_hit {
+    if hit_simd(world, ray, t_min, closest_t, out_hit) {
         found_hit = true;
         closest_t = out_hit.t;
-        *hit_id = id;
     }
 
     let spheres_remaining = world.sphere_x.len() - (world.sphere_x.len() % 4);
-    for i in spheres_remaining..world.sphere_x.len() {
-        if hit(world, i, ray, t_min, closest_t, out_hit) {
-            found_hit = true;
-            closest_t = out_hit.t;
-            *hit_id = i;
-        }
+    if hit(world, spheres_remaining, ray, t_min, closest_t, out_hit) {
+        found_hit = true;
     }
 
     found_hit
-}
-
-struct Camera {
-    eye_origin: Vec3,
-    lower_left: Vec3,
-    x_extent: Vec3,
-    y_extent: Vec3,
-    u: Vec3,
-    v: Vec3,
-    lens_radius: f32
-}
-
-impl Camera {
-    fn new(origin: Vec3, look_at: Vec3, up: Vec3, y_fov_deg: f32, aspect_ratio: f32, aperture: f32, focus_dist: f32) -> Camera {
-        let theta = degree_to_rad(y_fov_deg);
-        let h = f32::tan(theta / 2.0);
-        let viewport_height = 2.0 * h;
-        let viewport_width = aspect_ratio * viewport_height;
-        
-        let w = normalized(origin - look_at);
-        let u = normalized(cross(up, w));
-        let v = cross(w, u);
-
-        let horizontal = focus_dist * viewport_width * u;
-        let vertical = focus_dist * viewport_height * v;
-
-        Camera {
-            eye_origin: origin,
-            lower_left: origin - horizontal / 2.0 - vertical / 2.0 - focus_dist * w,
-            x_extent: horizontal,
-            y_extent: vertical,
-            u, v,
-            lens_radius: aperture / 2.0
-        }
-    }
-
-    fn get_ray(&self, s: f32, t: f32) -> Ray {
-        let rd = self.lens_radius * rand_in_unit_disk();
-        let offset = self.u * rd.x + self.v * rd.y;
-
-        Ray::new(
-            self.eye_origin + offset, 
-            self.lower_left + s * self.x_extent + t * self.y_extent - self.eye_origin - offset)
-    }
 }
 
 fn get_sky_color(r: Ray) -> Vec3 {
@@ -277,15 +289,14 @@ fn get_sky_color(r: Ray) -> Vec3 {
 
 fn sample_color(r: Ray, world: &World, bounces: i32) -> Vec3 {
     let mut hit = HitRecord::new();
-    let mut hit_id = 0;
 
     let mut color = vec3![1.0, 1.0, 1.0];
     let mut current_ray = r;
 
     for _bounce in 0..bounces {
-        if hit_spheres(&world, current_ray, 0.001, f32::MAX, &mut hit, &mut hit_id) {
+        if hit_spheres(&world, current_ray, 0.001, f32::MAX, &mut hit) {
             hit.normal = normalized(hit.normal); // The book makes a point about unit length normals but then doesnt enforce it.
-            let (did_bounce, attenuation, scattered) = world.materials[hit_id].scatter(&current_ray, &hit);
+            let (did_bounce, attenuation, scattered) = world.materials[hit.obj_id].scatter(&current_ray, &hit);
             if did_bounce {
                 current_ray = scattered;
                 color *= attenuation;
@@ -297,25 +308,6 @@ fn sample_color(r: Ray, world: &World, bounces: i32) -> Vec3 {
     }
 
     color
-}
-
-struct RGBImage {
-    width: usize,
-    height: usize,
-    buffer: Vec<u8> 
-}
-
-impl RGBImage {
-    fn new(width: usize, height: usize) -> RGBImage {
-        RGBImage {width, height, buffer: vec![0u8; width * height * 3]}
-    }
-
-    fn set_pixel(&mut self, row: usize, col: usize, color: Vec3) {
-        let write_idx = (col * 3) + (row * self.width * 3);
-        self.buffer[write_idx] =     color.x as u8;
-        self.buffer[write_idx + 1] = color.y as u8;
-        self.buffer[write_idx + 2] = color.z as u8;
-    }
 }
 
 trait Scattering {
@@ -478,6 +470,25 @@ fn generate_world() -> World {
     world.materials.push(Material::Metal(Metal{ albedo: vec3![0.7, 0.6, 0.5], roughness: 0.0 }));
 
     world
+}
+
+struct RGBImage {
+    width: usize,
+    height: usize,
+    buffer: Vec<u8> 
+}
+
+impl RGBImage {
+    fn new(width: usize, height: usize) -> RGBImage {
+        RGBImage {width, height, buffer: vec![0u8; width * height * 3]}
+    }
+
+    fn set_pixel(&mut self, row: usize, col: usize, color: Vec3) {
+        let write_idx = (col * 3) + (row * self.width * 3);
+        self.buffer[write_idx] =     color.x as u8;
+        self.buffer[write_idx + 1] = color.y as u8;
+        self.buffer[write_idx + 2] = color.z as u8;
+    }
 }
 
 fn main() {
