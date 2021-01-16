@@ -40,25 +40,28 @@ impl Camera {
         }
     }
 
-    fn get_ray(&self, s: f32, t: f32) -> Ray {
+    fn get_ray(&self, s: f32, t: f32, time0: f32, time1: f32) -> Ray {
         let rd = self.lens_radius * rand_in_unit_disk();
         let offset = self.u * rd.x + self.v * rd.y;
 
         Ray::new(
             self.eye_origin + offset, 
-            self.lower_left + s * self.x_extent + t * self.y_extent - self.eye_origin - offset)
+            self.lower_left + s * self.x_extent + t * self.y_extent - self.eye_origin - offset,
+            rand_in_range(time0, time1)
+        )
     }
 }
 
 #[derive(Clone, Copy)]
 struct Ray {
     origin: Vec3,
-    direction: Vec3
+    direction: Vec3,
+    time: f32
 }
 
 impl Ray {
-    fn new(origin: Vec3, direction: Vec3) -> Ray {
-        Ray { origin, direction }
+    fn new(origin: Vec3, direction: Vec3, time: f32) -> Ray {
+        Ray { origin, direction, time }
     }
 
     fn at(&self, t: f32) -> Vec3 {
@@ -69,14 +72,14 @@ impl Ray {
 struct HitRecord {
     point: Vec3,
     normal: Vec3,
-    t: f32,
     obj_id: usize,
+    t: f32,
     front_face: bool
 }
 
 impl HitRecord {
     fn new() -> HitRecord {
-        HitRecord { point: vec3![0.0, 0.0, 0.0], normal: vec3![0.0, 0.0, 0.0], t: 0.0, obj_id: 0, front_face: false}
+        HitRecord { point: vec3![0.0, 0.0, 0.0], normal: vec3![0.0, 0.0, 0.0], obj_id: 0, t: 0.0, front_face: false}
     }
     
     fn set_face_and_normal(&mut self, r: Ray, outward_normal: Vec3) {
@@ -123,7 +126,7 @@ fn hmin(mut m: __m128) -> f32 {
 
 fn hit_simd(world: &World, r: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
 unsafe {
-    let ro_x = _mm_set_ps1(r.origin.x);
+    let ro_x = _mm_set_ps1(r.origin.x); // TODO(): calculate movement
     let ro_y = _mm_set_ps1(r.origin.y);
     let ro_z = _mm_set_ps1(r.origin.z);
     let rd_x =  _mm_set_ps1(r.direction.x);
@@ -200,7 +203,7 @@ unsafe {
             let final_t = closest_t_scalar[lane as usize];
 
             out_hit.point = r.at(final_t);
-            out_hit.normal = (out_hit.point - world.sphere_center(hit_id)) / world.sphere_r[hit_id];
+            out_hit.normal = (out_hit.point - world.sphere_center(hit_id, r.time)) / world.sphere_r[hit_id];
             out_hit.set_face_and_normal(r, out_hit.normal);
             out_hit.t = final_t;
             out_hit.obj_id = hit_id as usize;
@@ -217,7 +220,7 @@ fn hit(world: &World, idx_first: usize, ray: Ray, t_min: f32, t_max: f32, out_hi
 
     let num_spheres = world.sphere_x.len();
     for i in idx_first..num_spheres {
-        let center = world.sphere_center(i);
+        let center = world.sphere_center(i, ray.time);
         let radius = world.sphere_r[i];
 
         let oc = ray.origin - center;
@@ -231,12 +234,6 @@ fn hit(world: &World, idx_first: usize, ray: Ray, t_min: f32, t_max: f32, out_hi
             let t1 = (-b - d_root) / a;
             let t2 = (-b + d_root) / a;
 
-            // let (hit_t, was_hit) = match ((t1 < t_max && t1 > t_min), (t2 < t_max && t2 > t_min)) {
-            //     (true, false) => (t1, true),
-            //     (false, true) => (t2, true),
-            //     (true, true) =>  (t1, true),
-            //     _ => (0.0, false)
-            // };
             if t1 < closest_t && t1 > t_min {
                 closest_t = t1;
                 hit_id = i as i32;
@@ -249,7 +246,7 @@ fn hit(world: &World, idx_first: usize, ray: Ray, t_min: f32, t_max: f32, out_hi
     }
     
     if hit_id != -1 {
-        let center = world.sphere_center(hit_id as usize);
+        let center = world.sphere_center(hit_id as usize, ray.time);
         let radius = world.sphere_r[hit_id as usize];
 
         out_hit.t = closest_t;
@@ -268,13 +265,15 @@ fn hit_spheres(world: &World, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut Hi
     let mut found_hit = false;
     let mut closest_t = t_max;
 
-    if hit_simd(world, ray, t_min, closest_t, out_hit) {
-        found_hit = true;
-        closest_t = out_hit.t;
-    }
+    // if hit_simd(world, ray, t_min, closest_t, out_hit) {
+    //     found_hit = true;
+    //     closest_t = out_hit.t;
+    // }
 
-    let spheres_remaining = world.sphere_x.len() - (world.sphere_x.len() % 4);
-    if hit(world, spheres_remaining, ray, t_min, closest_t, out_hit) {
+    // let start_idx = world.sphere_x.len() - (world.sphere_x.len() % 4);
+    let start_idx = 0;
+    
+    if hit(world, start_idx, ray, t_min, closest_t, out_hit) {
         found_hit = true;
     }
 
@@ -320,13 +319,13 @@ struct Lambert {
 }
 
 impl Scattering for Lambert {
-    fn scatter(&self, _r: &Ray, hit: &HitRecord) -> (bool, Vec3, Ray) {
+    fn scatter(&self, r: &Ray, hit: &HitRecord) -> (bool, Vec3, Ray) {
         let mut scatter_dir = hit.normal + rand_unit_vector();
         if scatter_dir.is_near_zero() {
             scatter_dir = hit.normal;
         }
 
-        let scattered = Ray::new(hit.point, scatter_dir);
+        let scattered = Ray::new(hit.point, scatter_dir, r.time);
         let attenuation = self.albedo;
         (true, attenuation, scattered)
     }
@@ -346,7 +345,7 @@ impl Metal {
 impl Scattering for Metal {
     fn scatter(&self, r: &Ray, hit: &HitRecord,) -> (bool, Vec3, Ray) {
         let reflected = reflect(normalized(r.direction), hit.normal);
-        let scattered = Ray::new(hit.point, reflected + self.roughness * rand_in_unit_sphere());
+        let scattered = Ray::new(hit.point, reflected + self.roughness * rand_in_unit_sphere(), r.time);
         let attenuation = self.albedo;
         let did_bounce = dot(scattered.direction, hit.normal) > 0.0;
         (did_bounce, attenuation, scattered)
@@ -378,7 +377,7 @@ impl Scattering for Dielectric {
             false => refract(unit_dir, hit.normal, refraction_ratio)
         };
 
-        (true, vec3![1.0], Ray::new(hit.point, direction))
+        (true, vec3![1.0], Ray::new(hit.point, direction, r.time))
     }
 }
 
@@ -398,39 +397,70 @@ impl Scattering for Material {
     }
 }
 
+#[derive(Default)]
+struct AnimationData {
+    velocity_x: Vec<f32>,
+    velocity_y: Vec<f32>,
+    velocity_z: Vec<f32>,
+    start_time: Vec<f32>,
+    end_time:   Vec<f32>,
+}
+
+impl AnimationData {
+    fn get_velocity(&self, idx: usize) -> Vec3 {
+        vec3![self.velocity_x[idx], self.velocity_y[idx], self.velocity_z[idx]]
+    }
+}
+
+#[derive(Default)]
 struct World {
     sphere_x: Vec<f32>,
     sphere_y: Vec<f32>,
     sphere_z: Vec<f32>,
     sphere_r: Vec<f32>,
-    materials: Vec<Material>
+    materials: Vec<Material>,
+    animations: AnimationData,
 }
 
 impl World {
-    fn new() -> World {
-        World {
-            sphere_x: vec![],
-            sphere_y: vec![],
-            sphere_z: vec![],
-            sphere_r: vec![],
-            materials: vec![]
-        }
-    }
-
     fn push_sphere(&mut self, center: Vec3, radius: f32) {
         self.sphere_x.push(center.x);
         self.sphere_y.push(center.y);
         self.sphere_z.push(center.z);
         self.sphere_r.push(radius);
+        self.animations.velocity_x.push(0.0);
+        self.animations.velocity_y.push(0.0);
+        self.animations.velocity_z.push(0.0);
+        self.animations.start_time.push(0.0);
+        self.animations.end_time.push(1.0);
     }
 
-    fn sphere_center(&self, idx: usize) -> Vec3 {
-        vec3![self.sphere_x[idx], self.sphere_y[idx], self.sphere_z[idx]]
+    fn push_moving_sphere(&mut self, center: Vec3, radius: f32, vel: Vec3, start_time: f32, end_time: f32) {
+        self.sphere_x.push(center.x);
+        self.sphere_y.push(center.y);
+        self.sphere_z.push(center.z);
+        self.sphere_r.push(radius);
+        self.animations.velocity_x.push(vel.x);
+        self.animations.velocity_y.push(vel.y);
+        self.animations.velocity_z.push(vel.z);
+        self.animations.start_time.push(start_time);
+        self.animations.end_time.push(end_time);
+    }
+
+    fn sphere_center(&self, idx: usize, time: f32) -> Vec3 {
+        // NOTE(): Could have is_static flag to shortcut calculations here. 
+        let center = vec3![self.sphere_x[idx], self.sphere_y[idx], self.sphere_z[idx]];
+
+        let velocity =  self.animations.get_velocity(idx);
+        let time0 = self.animations.start_time[idx];
+        let time1 = self.animations.end_time[idx];
+
+        center + ((time - time0) / (time1 - time0)) * velocity 
     }
 }
 
 fn generate_world() -> World {
-    let mut world = World::new();
+    let mut world = World::default();
 
     world.push_sphere(vec3![0.0, -1000.0, 0.0], 1000.0);
     world.materials.push(Material::Lambert(Lambert{ albedo: vec3![0.5, 0.5, 0.5] }));
@@ -445,14 +475,17 @@ fn generate_world() -> World {
             if length(center - vec3![4.0, 0.2, 0.0]) > 0.9 {
                 if material_select < 0.8 {
                     let albedo = Vec3::random() * Vec3::random();
-                    world.push_sphere(center, 0.2);
+                    let velocity = vec3![0.0, rand_in_range(0.0, 0.5), 0.0];
+                    world.push_moving_sphere(center, 0.2, velocity, 0.0, 1.0);
                     world.materials.push(Material::Lambert(Lambert{ albedo }));
-                } else if material_select < 0.96 {
+                } 
+                else if material_select < 0.96 {
                     let albedo = Vec3::random_range(0.5, 1.0);
                     let rough = rand_in_range(0.0, 0.5);
                     world.push_sphere(center, 0.2);
                     world.materials.push(Material::Metal(Metal::new(albedo, rough)));
-                } else {
+                } 
+                else {
                     world.push_sphere(center, 0.2);
                     world.materials.push(Material::Dielectric(Dielectric{ idx_of_refraction: 1.5 }));
                 }
@@ -511,7 +544,10 @@ fn main() {
     let sample_count = 16;
 
     println!("Finished setup. Begin rendering...");
-    let start_time = Instant::now();
+    let measure_start = Instant::now();
+
+    let start_t = 0.0;
+    let end_t = 1.0;
 
     for row in 0..image.height {
         for col in 0..image.width {
@@ -520,7 +556,7 @@ fn main() {
                 let (u_s, v_s) : (f32, f32) = (rand_f32(), rand_f32());
                 let u = (col as f32 + u_s) / image.width as f32;
                 let v = 1.0 - ((row as f32 + v_s) / image.height as f32); // Invert y to align with output from the book.
-                let r = cam.get_ray(u, v);
+                let r = cam.get_ray(u, v, start_t, end_t);
                 color += sample_color(r, &world, 50);
             }
             
@@ -533,8 +569,8 @@ fn main() {
         }
     }
 
-    let end_time = Instant::now();
-    let render_duration = end_time - start_time;
+    let measure_end = Instant::now();
+    let render_duration = measure_end - measure_start;
 
     println!("Finished rendering. Time elapsed: {} seconds.", render_duration.as_secs());
     println!("Saving result to out.png");
