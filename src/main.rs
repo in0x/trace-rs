@@ -126,12 +126,13 @@ fn hmin(mut m: __m128) -> f32 {
 
 fn hit_simd(world: &World, r: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
 unsafe {
-    let ro_x = _mm_set_ps1(r.origin.x); // TODO(): calculate movement
+    let ro_x = _mm_set_ps1(r.origin.x);
     let ro_y = _mm_set_ps1(r.origin.y);
     let ro_z = _mm_set_ps1(r.origin.z);
-    let rd_x =  _mm_set_ps1(r.direction.x);
-    let rd_y =  _mm_set_ps1(r.direction.y);
-    let rd_z =  _mm_set_ps1(r.direction.z);
+    let rd_x = _mm_set_ps1(r.direction.x);
+    let rd_y = _mm_set_ps1(r.direction.y);
+    let rd_z = _mm_set_ps1(r.direction.z);
+    let r_t  = _mm_set_ps1(r.time);
 
     let t_min4 = _mm_set_ps1(t_min);
     let zero_4 = _mm_set_ps1(0.0);
@@ -142,9 +143,18 @@ unsafe {
 
     let sphere_count = world.sphere_x.len() - (world.sphere_x.len() % 4);
     for i in (0..sphere_count).step_by(4) {
-        let sc_x =  _mm_loadu_ps(&world.sphere_x[i]);
-        let sc_y =  _mm_loadu_ps(&world.sphere_y[i]);
-        let sc_z =  _mm_loadu_ps(&world.sphere_z[i]);
+        let vel_x = _mm_loadu_ps(&world.animations.velocity_x[i]);
+        let vel_y = _mm_loadu_ps(&world.animations.velocity_y[i]);
+        let vel_z = _mm_loadu_ps(&world.animations.velocity_z[i]);
+        let time_0 = _mm_loadu_ps(&world.animations.start_time[i]);
+        let time_1 = _mm_loadu_ps(&world.animations.end_time[i]);
+
+        let time_t = _mm_div_ps(_mm_sub_ps(r_t, time_0), _mm_sub_ps(time_1, time_0));
+    
+        let sc_x = _mm_add_ps(_mm_loadu_ps(&world.sphere_x[i]), _mm_mul_ps(vel_x, time_t));
+        let sc_y = _mm_add_ps(_mm_loadu_ps(&world.sphere_y[i]), _mm_mul_ps(vel_y, time_t));
+        let sc_z = _mm_add_ps(_mm_loadu_ps(&world.sphere_z[i]), _mm_mul_ps(vel_z, time_t));
+
         let _radius =  _mm_loadu_ps(&world.sphere_r[i]);
         let sq_radius = _mm_mul_ps(_radius, _radius);
 
@@ -265,14 +275,12 @@ fn hit_spheres(world: &World, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut Hi
     let mut found_hit = false;
     let mut closest_t = t_max;
 
-    // if hit_simd(world, ray, t_min, closest_t, out_hit) {
-    //     found_hit = true;
-    //     closest_t = out_hit.t;
-    // }
+    if hit_simd(world, ray, t_min, closest_t, out_hit) {
+        found_hit = true;
+        closest_t = out_hit.t;
+    }
 
-    // let start_idx = world.sphere_x.len() - (world.sphere_x.len() % 4);
-    let start_idx = 0;
-    
+    let start_idx = world.sphere_x.len() - (world.sphere_x.len() % 4);
     if hit(world, start_idx, ray, t_min, closest_t, out_hit) {
         found_hit = true;
     }
@@ -536,12 +544,12 @@ fn main() {
         0.1, 10.0
     );
 
-    let pixels_x = 600_usize;
+    let pixels_x = 1200_usize;
     let pixels_y = (pixels_x as f32 / aspect_ratio) as usize;
     let mut image = RGBImage::new(pixels_x, pixels_y);
 
     let world = generate_world();
-    let sample_count = 16;
+    let sample_count = 64;
 
     println!("Finished setup. Begin rendering...");
     let measure_start = Instant::now();
