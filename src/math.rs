@@ -1,7 +1,24 @@
-// math.rs: Provides functionality for solving linear algebra problems. 
-use random_fast_rng::{Random};
+//! math.rs: Provides functionality for solving linear algebra problems. 
+
+use random_fast_rng::*;
+use std::cell::RefCell;
+use rand::{Rng,SeedableRng};
+use rand::rngs::StdRng;
+
+fn _seedable_rand() -> f32 {
+    thread_local! {
+        pub static THREAD_FAST_RNG: RefCell<StdRng> = RefCell::new(StdRng::seed_from_u64(801289018191233));
+    }
+
+    let mut_ptr = THREAD_FAST_RNG.with(|r| r.as_ptr());
+    unsafe { (*mut_ptr).gen() }
+}
 
 pub fn rand_f32() -> f32 {
+    random_fast_rng::local_rng().gen()
+}
+
+pub fn rand_int() -> u32 {
     random_fast_rng::local_rng().gen()
 }
 
