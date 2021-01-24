@@ -1,6 +1,4 @@
 pub mod math;
-pub mod camera;
-pub mod collide;
 
 use math::*;
 use std::time::Instant;
@@ -8,7 +6,6 @@ use std::arch::x86_64::*;
 
 extern crate image;
 extern crate random_fast_rng;
-
 
 pub struct Camera {
     eye_origin: Vec3,
@@ -89,58 +86,6 @@ impl HitRecord {
     fn set_face_and_normal(&mut self, r: Ray, outward_normal: Vec3) {
         self.front_face = dot(r.direction, outward_normal) < 0.0;
         self.normal = if self.front_face { outward_normal } else { -outward_normal };
-    }
-}
-
-#[derive(Default)]
-struct World {
-    sphere_x: Vec<f32>,
-    sphere_y: Vec<f32>,
-    sphere_z: Vec<f32>,
-    sphere_r: Vec<f32>,
-    material_ids: Vec<u32>,
-    animations: AnimationData,
-}
-
-impl World {
-    // fn push_sphere(&mut self, center: Vec3, radius: f32) {
-    //     self.sphere_x.push(center.x);
-    //     self.sphere_y.push(center.y);
-    //     self.sphere_z.push(center.z);
-    //     self.sphere_r.push(radius);
-    //     self.animations.velocity_x.push(0.0);
-    //     self.animations.velocity_y.push(0.0);
-    //     self.animations.velocity_z.push(0.0);
-    //     self.animations.start_time.push(0.0);
-    //     self.animations.end_time.push(1.0);
-    // }
-
-    fn push_moving_sphere(&mut self, center: Vec3, radius: f32, material_id: u32, vel: Vec3, start_time: f32, end_time: f32) {
-        self.sphere_x.push(center.x);
-        self.sphere_y.push(center.y);
-        self.sphere_z.push(center.z);
-        self.sphere_r.push(radius);
-        self.material_ids.push(material_id);
-        self.animations.velocity_x.push(vel.x);
-        self.animations.velocity_y.push(vel.y);
-        self.animations.velocity_z.push(vel.z);
-        self.animations.start_time.push(start_time);
-        self.animations.end_time.push(end_time);
-    }
-
-    fn sphere_center(&self, idx: usize, time: f32) -> Vec3 {
-        // NOTE(): Could have is_static flag to shortcut calculations here. 
-        let center = vec3![self.sphere_x[idx], self.sphere_y[idx], self.sphere_z[idx]];
-
-        let velocity =  self.animations.get_velocity(idx);
-        let time0 = self.animations.start_time[idx];
-        let time1 = self.animations.end_time[idx];
-
-        center + ((time - time0) / (time1 - time0)) * velocity 
-    }
-
-    fn count(&self) -> usize {
-        self.sphere_x.len()
     }
 }
 
@@ -511,6 +456,58 @@ impl AnimationData {
     }
 }
 
+
+#[derive(Default)]
+struct World {
+    sphere_x: Vec<f32>,
+    sphere_y: Vec<f32>,
+    sphere_z: Vec<f32>,
+    sphere_r: Vec<f32>,
+    material_ids: Vec<u32>,
+    animations: AnimationData,
+}
+
+impl World {
+    fn push_moving_sphere(&mut self, center: Vec3, radius: f32, material_id: u32, vel: Vec3, start_time: f32, end_time: f32) {
+        self.sphere_x.push(center.x);
+        self.sphere_y.push(center.y);
+        self.sphere_z.push(center.z);
+        self.sphere_r.push(radius);
+        self.material_ids.push(material_id);
+        self.animations.velocity_x.push(vel.x);
+        self.animations.velocity_y.push(vel.y);
+        self.animations.velocity_z.push(vel.z);
+        self.animations.start_time.push(start_time);
+        self.animations.end_time.push(end_time);
+    }
+
+    fn sphere_center(&self, idx: usize, time: f32) -> Vec3 {
+        // NOTE(): Could have is_static flag to shortcut calculations here. 
+        let center = vec3![self.sphere_x[idx], self.sphere_y[idx], self.sphere_z[idx]];
+
+        let velocity =  self.animations.get_velocity(idx);
+        let time0 = self.animations.start_time[idx];
+        let time1 = self.animations.end_time[idx];
+
+        center + ((time - time0) / (time1 - time0)) * velocity 
+    }
+
+    fn construct(objects: &[Sphere]) -> World {
+        let mut world = World::default();
+        for sphere in objects {
+            world.push_moving_sphere(
+                sphere.center,
+                sphere.radius,
+                sphere.material_id,
+                sphere.velocity,
+                sphere.start_time,
+                sphere.end_time,
+            );
+        }
+        world
+    }
+}
+
 struct Sphere {
     center: Vec3,
     velocity: Vec3,
@@ -518,6 +515,29 @@ struct Sphere {
     end_time: f32,
     radius: f32,
     material_id: u32
+}
+
+impl Sphere {
+    fn calc_aabb(&self, time0: f32, time1: f32) -> AABB {
+        let c0 = self.get_center(time0);
+        let c1 = self.get_center(time1);
+        
+        let bb0 = AABB {
+            min: c0 - self.radius,
+            max: c0 - self.radius,
+        };
+
+        let bb1 = AABB {
+            min: c1 - self.radius,
+            max: c1 + self.radius,
+        };
+
+        AABB::merge(&bb0, &bb1)
+    }
+
+    fn get_center(&self, time: f32) -> Vec3 {
+        self.center + ((time - self.start_time) / (self.end_time - self.start_time)) * self.velocity  
+    }
 }
 
 fn push_sphere(objects: &mut Vec<Sphere>, center: Vec3, radius: f32, mat: usize) {
@@ -663,36 +683,6 @@ impl AABB {
     }
 }
 
-impl Sphere {
-    fn calc_static_aabb(&self) -> AABB {
-        AABB {
-            min: self.center - self.radius,
-            max: self.center + self.radius
-        }
-    }
-
-    fn calc_aabb(&self, time0: f32, time1: f32) -> AABB {
-        let c0 = self.get_center(time0);
-        let c1 = self.get_center(time1);
-        
-        let bb0 = AABB {
-            min: c0 - self.radius,
-            max: c0 - self.radius,
-        };
-
-        let bb1 = AABB {
-            min: c1 - self.radius,
-            max: c1 + self.radius,
-        };
-
-        AABB::merge(&bb0, &bb1)
-    }
-
-    fn get_center(&self, time: f32) -> Vec3 {
-        self.center + ((time - self.start_time) / (self.end_time - self.start_time)) * self.velocity  
-    }
-}
-
 struct BVHNode {
     bounds: AABB,
     left_child: u32,
@@ -821,21 +811,6 @@ impl RGBImage {
     }
 }
 
-fn decompose_world(objects: &[Sphere]) -> World {
-    let mut world = World::default();
-    for sphere in objects {
-        world.push_moving_sphere(
-            sphere.center,
-            sphere.radius,
-            sphere.material_id,
-            sphere.velocity,
-            sphere.start_time,
-            sphere.end_time,
-        );
-    }
-    world
-}
-
 fn main() {
     let aspect_ratio = 3.0 / 2.0;
     let origin = vec3![13.0, 2.0, 3.0];
@@ -865,7 +840,7 @@ fn main() {
     construct_bvh(&mut objects, start_t, end_t, &mut bvh_tree, &mut bvh_root, 0, obj_count);
 
     let bvh = BVH { root: bvh_root, tree: bvh_tree };
-    let world = decompose_world(&objects);
+    let world = World::construct(&objects);
 
     println!("Finished setup. Begin rendering...");
     let measure_start = Instant::now();
