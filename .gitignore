@@ -1,1 +1,4 @@
 /target
+.DS_Store
+src/.DS_Store
+armffi/lib

@@ -1,8 +1,14 @@
+#![feature(stdsimd)]
+#![feature(platform_intrinsics)]
+#![feature(link_llvm_intrinsics)]
+#![feature(simd_ffi)]
+
 pub mod math;
+pub mod simd;
 
 use math::*;
+use simd::*;
 use std::time::Instant;
-use std::arch::x86_64::*;
 
 extern crate image;
 extern crate random_fast_rng;
@@ -89,121 +95,90 @@ impl HitRecord {
     }
 }
 
-macro_rules! MY_MM_SHUFFLE {
-    ($fp3: expr, $fp2: expr, $fp1: expr, $fp0: expr) => {
-        (($fp3 << 6) | ($fp2 << 4) | ($fp1 << 2) | $fp0)
-    };
-}
-
-macro_rules! MY_SHUFFLE_4 {
-    ($v: expr, $x: expr, $y: expr, $z: expr, $w: expr) => {
-        _mm_shuffle_ps($v, $v, MY_MM_SHUFFLE!($w,$z,$y,$x))
-    };
-}
-
-fn select(a: __m128, b: __m128, cond: __m128) -> __m128 {
-    unsafe {
-        _mm_blendv_ps(a, b, cond)
-    }
-}
-
-fn selecti(a: __m128i, b: __m128i, cond: __m128) -> __m128i {
-    unsafe {
-        _mm_blendv_epi8(a, b, _mm_castps_si128(cond))
-    }
-}
-
-unsafe fn hmin(mut m: __m128) -> f32 {
-    m = _mm_min_ps(m, MY_SHUFFLE_4!(m, 2, 3, 0, 0));
-    m = _mm_min_ps(m, MY_SHUFFLE_4!(m, 1, 0, 0, 0));
-    _mm_cvtss_f32(m)
-}
-
-unsafe fn hmax(mut m: __m128) -> f32 {
-    m = _mm_max_ps(m, MY_SHUFFLE_4!(m, 2, 3, 0, 0));
-    m = _mm_max_ps(m, MY_SHUFFLE_4!(m, 1, 0, 0, 0));
-    _mm_cvtss_f32(m)
-}
+// unsafe fn hmax(mut m: __m128) -> f32 {
+//     m = _mm_max_ps(m, MY_SHUFFLE_4!(m, 2, 3, 0, 0));
+//     m = _mm_max_ps(m, MY_SHUFFLE_4!(m, 1, 0, 0, 0));
+//     _mm_cvtss_f32(m)
+// }
 
 const SIMD_WIDTH: usize = 4;
 
 fn hit_simd(world: &World, start: usize, len: usize, r: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
-unsafe {
-    let ro_x = _mm_set_ps1(r.origin.x);
-    let ro_y = _mm_set_ps1(r.origin.y);
-    let ro_z = _mm_set_ps1(r.origin.z);
-    let rd_x = _mm_set_ps1(r.direction.x);
-    let rd_y = _mm_set_ps1(r.direction.y);
-    let rd_z = _mm_set_ps1(r.direction.z);
-    let r_t  = _mm_set_ps1(r.time);
+    let ro_x = f32x4::splat(r.origin.x);
+    let ro_y = f32x4::splat(r.origin.y);
+    let ro_z = f32x4::splat(r.origin.z);
+    let rd_x = f32x4::splat(r.direction.x);
+    let rd_y = f32x4::splat(r.direction.y);
+    let rd_z = f32x4::splat(r.direction.z);
+    let r_t  = f32x4::splat(r.time);
 
-    let t_min4 = _mm_set_ps1(t_min);
-    let zero_4 = _mm_set_ps1(0.0);
+    let t_min4 = f32x4::splat(t_min);
+    let zero_4 = f32x4::splat(0.0);
 
-    let mut id = _mm_set1_epi32(-1);
-    let mut closest_t = _mm_set_ps1(t_max);
+    let mut id = i32x4::splat(-1);
+    let mut closest_t = f32x4::splat(t_max);
 
     let first_idx = start as i32;
-    let mut cur_id = _mm_set_epi32(first_idx + 3, first_idx + 2, first_idx + 1, first_idx);
+    let mut cur_id = i32x4::set(first_idx, first_idx + 1, first_idx + 2, first_idx + 3);
 
     let end = start + len;
-    let sphere_count = end - (end % SIMD_WIDTH);
+    let sphere_count = end - (end % SIMD_WIDTH) - SIMD_WIDTH;
     for i in (start..sphere_count).step_by(SIMD_WIDTH) {
-        let vel_x = _mm_loadu_ps(&world.animations.velocity_x[i]);
-        let vel_y = _mm_loadu_ps(&world.animations.velocity_y[i]);
-        let vel_z = _mm_loadu_ps(&world.animations.velocity_z[i]);
-        let time_0 = _mm_loadu_ps(&world.animations.start_time[i]);
-        let time_1 = _mm_loadu_ps(&world.animations.end_time[i]);
+        let vel_x =  f32x4::loadu(&world.animations.velocity_x[i..i+4]);
+        let vel_y =  f32x4::loadu(&world.animations.velocity_y[i..i+4]);
+        let vel_z =  f32x4::loadu(&world.animations.velocity_z[i..i+4]);
+        let time_0 = f32x4::loadu(&world.animations.start_time[i..i+4]);
+        let time_1 = f32x4::loadu(&world.animations.end_time[i..i+4]);
 
-        let time_t = _mm_div_ps(_mm_sub_ps(r_t, time_0), _mm_sub_ps(time_1, time_0));
+        let time_t = f32x4::div(f32x4::sub(r_t, time_0), f32x4::sub(time_1, time_0));
     
-        let sc_x = _mm_add_ps(_mm_loadu_ps(&world.sphere_x[i]), _mm_mul_ps(vel_x, time_t));
-        let sc_y = _mm_add_ps(_mm_loadu_ps(&world.sphere_y[i]), _mm_mul_ps(vel_y, time_t));
-        let sc_z = _mm_add_ps(_mm_loadu_ps(&world.sphere_z[i]), _mm_mul_ps(vel_z, time_t));
+        let sc_x = f32x4::add(f32x4::loadu(&world.sphere_x[i..i+4]), f32x4::mul(vel_x, time_t));
+        let sc_y = f32x4::add(f32x4::loadu(&world.sphere_y[i..i+4]), f32x4::mul(vel_y, time_t));
+        let sc_z = f32x4::add(f32x4::loadu(&world.sphere_z[i..i+4]), f32x4::mul(vel_z, time_t));
 
-        let _radius =  _mm_loadu_ps(&world.sphere_r[i]);
-        let sq_radius = _mm_mul_ps(_radius, _radius);
+        let _radius =  f32x4::loadu(&world.sphere_r[i..i+4]);
+        let sq_radius = f32x4::mul(_radius, _radius);
 
-        let co_x = _mm_sub_ps(sc_x, ro_x);
-        let co_y = _mm_sub_ps(sc_y, ro_y);
-        let co_z = _mm_sub_ps(sc_z, ro_z);
+        let co_x = f32x4::sub(sc_x, ro_x);
+        let co_y = f32x4::sub(sc_y, ro_y);
+        let co_z = f32x4::sub(sc_z, ro_z);
 
         // Note: nb is minus b, avoids having to negate b (and the sign cancels out in c).
-        let a  = _mm_add_ps(_mm_add_ps(_mm_mul_ps(rd_x, rd_x), _mm_mul_ps(rd_y, rd_y)), _mm_mul_ps(rd_z, rd_z)); 
-        let nb = _mm_add_ps(_mm_add_ps(_mm_mul_ps(co_x, rd_x), _mm_mul_ps(co_y, rd_y)), _mm_mul_ps(co_z, rd_z));
-        let c  = _mm_sub_ps(_mm_add_ps(_mm_add_ps(_mm_mul_ps(co_x, co_x), _mm_mul_ps(co_y, co_y)), _mm_mul_ps(co_z, co_z)), sq_radius);
+        let a  = f32x4::add(f32x4::add(f32x4::mul(rd_x, rd_x), f32x4::mul(rd_y, rd_y)), f32x4::mul(rd_z, rd_z)); 
+        let nb = f32x4::add(f32x4::add(f32x4::mul(co_x, rd_x), f32x4::mul(co_y, rd_y)), f32x4::mul(co_z, rd_z));
+        let c  = f32x4::sub(f32x4::add(f32x4::add(f32x4::mul(co_x, co_x), f32x4::mul(co_y, co_y)), f32x4::mul(co_z, co_z)), sq_radius);
 
-        let discr = _mm_sub_ps(_mm_mul_ps(nb, nb), _mm_mul_ps(a, c));
-        let discr_gt_0 = _mm_cmpgt_ps(discr, zero_4);
+        let discr = f32x4::sub(f32x4::mul(nb, nb), f32x4::mul(a, c));
+        let discr_gt_0 = f32x4::cmp_gt(discr, zero_4);
 
         // See if any of the four spheres have a solution.
-        if  _mm_movemask_ps(discr_gt_0) != 0 {
-            let discr_root = _mm_sqrt_ps(discr);
-            let t0 = _mm_div_ps(_mm_sub_ps(nb, discr_root), a);
-            let t1 = _mm_div_ps(_mm_add_ps(nb, discr_root), a);
+        if discr_gt_0.any() {
+            let discr_root = f32x4::sqrt(discr);
+            let t0 = f32x4::div(f32x4::sub(nb, discr_root), a);
+            let t1 = f32x4::div(f32x4::add(nb, discr_root), a);
 
-            let best_t = select(t1, t0, _mm_cmpgt_ps(t0, t_min4)); // If t0 is above min, take it (since it's the earlier hit), else try t1.
-            let mask = _mm_and_ps(_mm_and_ps(discr_gt_0, _mm_cmpgt_ps(best_t, t_min4)), _mm_cmplt_ps(best_t, closest_t));
+            let best_t = f32x4::blendv(t0, t1, f32x4::cmp_gt(t0, t_min4)); // If t0 is above min, take it (since it's the earlier hit), else try t1.
+            let mask = u32x4::and(u32x4::and(discr_gt_0, f32x4::cmp_gt(best_t, t_min4)), f32x4::cmp_lt(best_t, closest_t));
             
             // if hit, take it
-            id = selecti(id, cur_id, mask);
-            closest_t = select(closest_t, best_t, mask);
+            id = i32x4::blendv(cur_id, id, mask);
+            closest_t = f32x4::blendv(best_t, closest_t, mask);
         }
         
-        cur_id = _mm_add_epi32(cur_id, _mm_set1_epi32(SIMD_WIDTH as i32));
+        cur_id = i32x4::add(cur_id, i32x4::splat(SIMD_WIDTH as i32));
     }
     
     // We found the four best hits, lets see if any are actually close.
-    let min_t = hmin(closest_t);
+    let min_t = f32x4::hmin(closest_t);
     if min_t < t_max { 
-        let min_t_channel = _mm_cmpeq_ps(closest_t, _mm_set_ps1(min_t));
-        let min_t_mask = _mm_movemask_ps(min_t_channel);
+        let min_t_channel = f32x4::cmp_eq(closest_t, f32x4::splat(min_t));
+        let min_t_mask = u32x4::vmovemaskq_u32(min_t_channel.m);
         if min_t_mask != 0 {
             let mut id_scalar : [i32;4] = [0, 0, 0, 0];
             let mut closest_t_scalar : [f32;4] = [0.0, 0.0, 0.0, 0.0];
 
-            _mm_storeu_si128(id_scalar.as_mut_ptr() as *mut __m128i, id);
-            _mm_storeu_ps(closest_t_scalar.as_mut_ptr(), closest_t);
+            i32x4::storeu(id, &mut id_scalar);
+            f32x4::storeu(closest_t, &mut closest_t_scalar);
 
             // Map the lowest set bit of the value indexed with. 
             let mask_to_channel : [i32;16] =
@@ -225,7 +200,7 @@ unsafe {
             out_hit.obj_id = hit_id as usize;
             return true;
         }
-    }}
+    }
     
     false
 }
@@ -659,28 +634,28 @@ impl AABB {
         t_max > t_min
     }
 
-    fn _hit_simd(&self, r: Ray, t_min: f32, t_max: f32) -> bool {
-    unsafe {
-            let inv_rd = _mm_div_ps(_mm_set_ps1(1.0), _mm_set_ps(r.direction.x, r.direction.y, r.direction.z, 1.0));
-            let ro = _mm_set_ps(r.origin.x, r.origin.y, r.origin.z, 0.0);
+    // fn _hit_simd(&self, r: Ray, t_min: f32, t_max: f32) -> bool {
+    // unsafe {
+    //         let inv_rd = _mm_div_ps(_mm_set_ps1(1.0), _mm_set_ps(r.direction.x, r.direction.y, r.direction.z, 1.0));
+    //         let ro = _mm_set_ps(r.origin.x, r.origin.y, r.origin.z, 0.0);
     
-            let bb_min = _mm_set_ps(self.min.x, self.min.y, self.min.z, 0.0);
-            let bb_max = _mm_set_ps(self.max.x, self.max.y, self.max.z, 0.0);
+    //         let bb_min = _mm_set_ps(self.min.x, self.min.y, self.min.z, 0.0);
+    //         let bb_max = _mm_set_ps(self.max.x, self.max.y, self.max.z, 0.0);
     
-            let t0 = _mm_mul_ps(_mm_sub_ps(bb_min, ro), inv_rd);
-            let t1 = _mm_mul_ps(_mm_sub_ps(bb_max, ro), inv_rd);
+    //         let t0 = _mm_mul_ps(_mm_sub_ps(bb_min, ro), inv_rd);
+    //         let t1 = _mm_mul_ps(_mm_sub_ps(bb_max, ro), inv_rd);
     
-            let inv_lt_0 = _mm_cmplt_ps(inv_rd, _mm_set_ps1(0.0));
+    //         let inv_lt_0 = _mm_cmplt_ps(inv_rd, _mm_set_ps1(0.0));
 
-            let mut swap_min = _mm_blendv_ps(t0, t1, inv_lt_0);
-            let mut swap_max = _mm_blendv_ps(t1, t0, inv_lt_0);
+    //         let mut swap_min = _mm_blendv_ps(t0, t1, inv_lt_0);
+    //         let mut swap_max = _mm_blendv_ps(t1, t0, inv_lt_0);
 
-            swap_min = _mm_blend_ps(swap_min, _mm_set_ps1(t_min), 1);
-            swap_max = _mm_blend_ps(swap_max, _mm_set_ps1(t_max), 1);
+    //         swap_min = _mm_blend_ps(swap_min, _mm_set_ps1(t_min), 1);
+    //         swap_max = _mm_blend_ps(swap_max, _mm_set_ps1(t_max), 1);
 
-            hmin(swap_max) > hmax(swap_min)
-    }
-    }
+    //         hmin(swap_max) > hmax(swap_min)
+    // }
+    // }
 }
 
 struct BVHNode {

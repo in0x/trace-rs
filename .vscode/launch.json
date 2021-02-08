@@ -5,6 +5,19 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "OSX Debug",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/trace_rs",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopOnEntry": false,
+            // "sourceLanguages": ["rust"],
+            // "sourceMap": {
+                // "/rustc/*": "${env:HOME}/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust"
+            // }
+        },
+        {
             "name": "win32 debug",
             "type": "cppvsdbg",
             "request": "launch",
@@ -25,6 +38,6 @@
             "cwd": "${workspaceFolder}",
             "environment": [],
             "externalConsole": false
-        },
+        }
     ]
 }
