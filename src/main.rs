@@ -253,7 +253,7 @@ fn hit(world: &World, start: usize, len: usize, ray: Ray, t_min: f32, t_max: f32
 }    
 
 trait Hitable {
-    fn hit(&self, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool;
+    fn hit(&self, ray: Ray, t_min: f32, t_max: f32, world: &World, out_hit: &mut HitRecord) -> bool;
 }
 
 fn hit_spheres(world: &World, start: usize, len: usize, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
@@ -276,36 +276,37 @@ fn hit_spheres(world: &World, start: usize, len: usize, ray: Ray, t_min: f32, t_
     found_hit
 }
 
-fn hit_world(r: Ray, t_min: f32, t_max: f32, current_node: &BVHNode, bvh: &BVH, world: &World, out_hit: &mut HitRecord) -> bool {        
-    if !current_node.bounds.hit(r, t_min, t_max) {
-        return false;
-    }
+// fn hit_world(r: Ray, t_min: f32, t_max: f32, current_node: &BVHNode, bvh: &BVH, world: &World, out_hit: &mut HitRecord) -> bool {        
+//     if !current_node.bounds.hit(r, t_min, t_max) {
+//         return false;
+//     }
 
-    if current_node.geometry_idx != INVALID_GEO_IDX {
-        let start = current_node.geometry_idx as usize;
-        let len = current_node.geometry_len as usize;
-        return hit_spheres(world, start, len, r, t_min, t_max, out_hit);
-    }
+//     if current_node.geometry_idx != INVALID_GEO_IDX {
+//         let start = current_node.geometry_idx as usize;
+//         let len = current_node.geometry_len as usize;
+//         return hit_spheres(world, start, len, r, t_min, t_max, out_hit);
+//     }
 
-    let l_node = &bvh.tree[current_node.left_child as usize];
-    let r_node = &bvh.tree[current_node.right_child as usize];
+//     let l_node = &bvh.tree[current_node.left_child as usize];
+//     let r_node = &bvh.tree[current_node.right_child as usize];
 
-    let l_hit = hit_world(r, t_min, t_max, l_node, bvh, world, out_hit);
-    let closest_t = if l_hit { out_hit.t } else { t_max }; 
-    let r_hit = hit_world(r, t_min, closest_t, r_node, bvh, world, out_hit);
+//     let l_hit = hit_world(r, t_min, t_max, l_node, bvh, world, out_hit);
+//     let closest_t = if l_hit { out_hit.t } else { t_max }; 
+//     let r_hit = hit_world(r, t_min, closest_t, r_node, bvh, world, out_hit);
 
-    l_hit || r_hit
-}
+//     l_hit || r_hit
+// }
 
-fn sample_color(r: Ray, bvh: &BVH, world: &World, materials: &[Material], bounces: i32) -> Vec3 {
+fn sample_color(r: Ray, hit_tree: & dyn Hitable, world: &World, materials: &[Material], bounces: i32) -> Vec3 {
     let mut hit = HitRecord::new();
 
     let mut color = vec3![1.0, 1.0, 1.0];
     let mut current_ray = r;
 
     for _bounce in 0..bounces {
-        if hit_world(current_ray, 0.001, f32::MAX, &bvh.root, bvh, &world, &mut hit) {
+        // if hit_world(current_ray, 0.001, f32::MAX, &bvh.root, bvh, &world, &mut hit) {
         // if hit_spheres(world, 0, world.sphere_x.len(), current_ray, 0.001, f32::MAX, &mut hit) {
+        if hit_tree.hit(current_ray, 0.001, f32::MAX, world, &mut hit) {
             hit.normal = normalized(hit.normal); // The book makes a point about unit length normals but then doesnt enforce it.
             let mat_id = world.material_ids[hit.obj_id] as usize;
             let (did_bounce, attenuation, scattered) = materials[mat_id].scatter(&current_ray, &hit);
@@ -634,6 +635,48 @@ impl AABB {
         t_max > t_min
     }
 
+    // unsafe fn hit_wide(r: Ray, t_min: f32, t_max: f32) -> bool {
+    //     let min_x = _mm_set_ps1(0.0);
+    //     let min_y = _mm_set_ps1(0.0);
+    //     let min_z = _mm_set_ps1(0.0);
+        
+    //     let max_x = _mm_set_ps1(0.0);
+    //     let max_y = _mm_set_ps1(0.0);
+    //     let max_z = _mm_set_ps1(0.0);
+    
+    //     let ro_x = _mm_set_ps1(r.origin.x);
+    //     let ro_y = _mm_set_ps1(r.origin.y);
+    //     let ro_z = _mm_set_ps1(r.origin.z);
+    
+    //     let inv_rd_x = _mm_set_ps1(1.0 / r.direction.x);
+    //     let inv_rd_y = _mm_set_ps1(1.0 / r.direction.y);
+    //     let inv_rd_z = _mm_set_ps1(1.0 / r.direction.z);
+    
+    //     let zero_4 = _mm_set_ps1(0.0);
+    //     let t_min_4 = _mm_set_ps1(t_min);
+    //     let t_max_4 = _mm_set_ps1(t_max);
+        
+    //     let mut t0_x = _mm_mul_ps(_mm_sub_ps(min_x, ro_x), inv_rd_x);
+    //     let mut t1_x = _mm_mul_ps(_mm_sub_ps(max_x, ro_x), inv_rd_x);
+    
+    //     let inv_rd_x_lt0 = _mm_cmplt_ps(inv_rd_x, zero_4);
+    //     t0_x = _mm_blendv_ps(t0_x, t1_x, inv_rd_x_lt0);
+    //     t1_x = _mm_blendv_ps(t1_x, t0_x, inv_rd_x_lt0);
+    
+    //     t0_x = _mm_max_ps(t_min_4, t0_x);
+    //     t1_x = _mm_min_ps(t_max_4, t1_x);
+    
+    //     let any_x_hit = _mm_cmple_ps(t1_x, t0_x);
+    //     if _mm_movemask_ps(any_x_hit) != 0 {
+    //         // TODO(): lane select
+    //         return true;
+    //     }
+    
+    //     // TODO(): repeat for y and z
+    
+    //     return false;
+    // }
+
     // fn _hit_simd(&self, r: Ray, t_min: f32, t_max: f32) -> bool {
     // unsafe {
     //         let inv_rd = _mm_div_ps(_mm_set_ps1(1.0), _mm_set_ps(r.direction.x, r.direction.y, r.direction.z, 1.0));
@@ -680,6 +723,35 @@ impl BVHNode {
 struct BVH {
     root: BVHNode,
     tree: Vec<BVHNode>
+}
+
+impl BVH {
+    fn hit_world(r: Ray, t_min: f32, t_max: f32, current_node: &BVHNode, bvh: &BVH, world: &World, out_hit: &mut HitRecord) -> bool {        
+        if !current_node.bounds.hit(r, t_min, t_max) {
+            return false;
+        }
+
+        if current_node.geometry_idx != INVALID_GEO_IDX {
+            let start = current_node.geometry_idx as usize;
+            let len = current_node.geometry_len as usize;
+            return hit_spheres(world, start, len, r, t_min, t_max, out_hit);
+        }
+
+        let l_node = &bvh.tree[current_node.left_child as usize];
+        let r_node = &bvh.tree[current_node.right_child as usize];
+
+        let l_hit = BVH::hit_world(r, t_min, t_max, l_node, bvh, world, out_hit);
+        let closest_t = if l_hit { out_hit.t } else { t_max }; 
+        let r_hit = BVH::hit_world(r, t_min, closest_t, r_node, bvh, world, out_hit);
+
+        l_hit || r_hit
+    }
+}
+
+impl Hitable for BVH {
+    fn hit(&self, ray: Ray, t_min: f32, t_max: f32, world: &World, out_hit: &mut HitRecord) -> bool {
+        return BVH::hit_world(ray, t_min, t_max, &self.root, &self, world, out_hit);
+    }
 }
 
 #[derive(Copy,Clone)]
@@ -767,6 +839,187 @@ fn construct_bvh(objects: &mut[Sphere], time0: f32, time1: f32, bvh: &mut Vec<BV
     cur_node.bounds = AABB::merge(&left_bb, &right_bb);
 }
 
+enum BVHNodeType {
+    Joint, /// This node's children are BVHNodes.
+    Leaf,  /// This node's children are intersectibles.
+    EnumCount
+}
+
+/// A QBVHNode has up to four children that it stores the bounds of.
+/// This allows fast intersection testing by testing all 4 at once through SIMD.
+struct QBVHNode {
+    bb_min_x: [f32; 4],
+    bb_min_y: [f32; 4],
+    bb_min_z: [f32; 4],
+    bb_max_x: [f32; 4],
+    bb_max_y: [f32; 4],
+    bb_max_z: [f32; 4],
+    children: [i32; 4],
+    child_type: [BVHNodeType; 4],
+    num_children: u8
+}
+
+impl QBVHNode {
+    fn new() -> QBVHNode {
+        QBVHNode {
+            bb_min_x: [0.0, 0.0, 0.0, 0.0],
+            bb_min_y: [0.0, 0.0, 0.0, 0.0],
+            bb_min_z: [0.0, 0.0, 0.0, 0.0],
+            bb_max_x: [0.0, 0.0, 0.0, 0.0],
+            bb_max_y: [0.0, 0.0, 0.0, 0.0],
+            bb_max_z: [0.0, 0.0, 0.0, 0.0],
+            children: [-1, -1, -1, -1],
+            child_type: [BVHNodeType:: Joint, BVHNodeType:: Joint, BVHNodeType:: Joint, BVHNodeType:: Joint],
+            num_children: 0
+            // ^ We want to indicate what the children are, so we can avoid inserting
+            // BVHNodes for single object children since that just wastes space.
+        }
+    }
+}
+
+struct QBVH {
+    root: QBVHNode,
+    tree: Vec<QBVHNode>
+}
+
+/// Retrieves the bounds for the child of node at child_idx.
+fn get_qbvh_aabb(node: &QBVHNode, child_idx: u8) -> AABB {
+    let i = child_idx as usize;
+    AABB {
+        min: vec3![node.bb_min_x[i], node.bb_min_y[i], node.bb_min_z[i]],
+        max: vec3![node.bb_max_x[i], node.bb_max_y[i], node.bb_max_z[i]],
+    }
+}
+
+/// Sets the merged bounds on the node for its child at child_idx.
+fn set_qbvh_aabb(node: &mut QBVHNode, child_idx: u8, bb: &AABB) {
+    node.bb_min_x[child_idx as usize] = bb.min.x;
+    node.bb_min_y[child_idx as usize] = bb.min.y;
+    node.bb_min_z[child_idx as usize] = bb.min.z;
+    node.bb_max_x[child_idx as usize] = bb.max.x;
+    node.bb_max_y[child_idx as usize] = bb.max.y;
+    node.bb_max_z[child_idx as usize] = bb.max.z;   
+}
+
+/// Calculates the merged bounds of child of this node and assigns it 
+/// to the appropriate slot in this node.
+fn merge_bounds_from_children(node: &mut QBVHNode, qbvh: &Vec<QBVHNode>) {
+    for child_i in 0..node.num_children {
+
+        let child_node = &qbvh[child_i as usize];
+        assert_ne!(child_node.num_children, 0);
+
+        let mut bounds = get_qbvh_aabb(&child_node, 0);
+        for node_i in 1..child_node.num_children {
+            bounds = AABB::merge(&bounds, &get_qbvh_aabb(&child_node, node_i));
+        }
+
+        set_qbvh_aabb(node, child_i, &bounds);
+    }
+}
+
+
+fn construct_qbvh(objects: &mut[Sphere], t0: f32, t1: f32, bvh: &mut Vec<QBVHNode>, cur_node: &mut QBVHNode, start: usize, end: usize) {
+
+    let split_axis = random_axis();
+    let range = end - start;
+
+    let sub_objects = &mut objects[start..end];
+
+    if range <= 4 {
+
+        for i in 0..range {          
+            let aabb = objects[i].calc_aabb(t0, t1);
+            cur_node.bb_min_x[i] = aabb.min.x;
+            cur_node.bb_min_y[i] = aabb.min.y;
+            cur_node.bb_min_z[i] = aabb.min.z;
+            cur_node.bb_max_x[i] = aabb.max.x;
+            cur_node.bb_max_y[i] = aabb.max.y;
+            cur_node.bb_max_z[i] = aabb.max.z;
+            cur_node.child_type[i] = BVHNodeType::Leaf;
+            cur_node.children[i] = (start + i) as i32;
+            cur_node.num_children += 1;
+        }
+
+        // pad if we dont have 4 nodes to fill with
+        // TODO(): we should probably assert on this in the hit logic. The bvh
+        // for this child will be all 0, so we should never hit it and get an idx of -1.
+        for i in range..4 {
+            cur_node.children[i] = -1;
+            cur_node.child_type[i] = BVHNodeType::Leaf;
+        }
+    }
+    // TODO(): Do we insert a case here we handle setting up leaf nodes?
+    // Or we could replace the above case with one that checks the next divide.
+    else if range < 16 {
+        // next nodes will end up being leaves, should pad to four
+        // or should we? is full 4 prefereable? Probably, better simd occupancy
+
+        let mut start_idx = start as i32;
+        let mut nodes_to_insert = range as i32;
+        while nodes_to_insert > 0 {
+            let num_children = if nodes_to_insert >= 4 { 4 } else { nodes_to_insert };
+            let mut node = QBVHNode::new();
+            construct_qbvh(objects, t0, t1, bvh, &mut node, start_idx as usize, (start_idx + num_children) as usize);
+
+            cur_node.num_children += 1;
+
+            start_idx += num_children;
+            nodes_to_insert -= num_children;
+        }
+
+        merge_bounds_from_children(cur_node, bvh);
+
+        // what we really want to do is divide far enough down that we hit an invividual sphere level.
+        // if we're <= 4 we distribute individual sphere as children
+        // if we're < 16 we divide up into pad four blocks.
+        // if we're >= 16 we run the normal split below
+    }
+    else 
+    {
+        sort(sub_objects, split_axis, t0, t1);
+
+        let split_step = range / 4;
+
+        let next_node_idx = bvh.len() as i32;
+        cur_node.children[0] = next_node_idx;
+        cur_node.children[1] = next_node_idx + 1;
+        cur_node.children[2] = next_node_idx + 2;
+        cur_node.children[3] = next_node_idx + 3;
+
+        bvh.push(QBVHNode::new());
+        bvh.push(QBVHNode::new());
+        bvh.push(QBVHNode::new());
+        bvh.push(QBVHNode::new());
+
+        // TODO(); Should we try to fill up as many with new nodes with 4 children and discard the rest? 
+
+        let mut node_0 = QBVHNode::new();
+        construct_qbvh(objects, t0, t1, bvh, &mut node_0, start, start + split_step);
+        bvh[cur_node.children[0] as usize] = node_0;
+
+        let mut node_1 = QBVHNode::new();
+        construct_qbvh(objects, t0, t1, bvh, &mut node_1, start + split_step, start + split_step * 2);
+        bvh[cur_node.children[1] as usize] = node_1;
+
+        let mut node_2 = QBVHNode::new();
+        construct_qbvh(objects, t0, t1, bvh, &mut node_2, start + split_step * 2, start + split_step * 3);
+        bvh[cur_node.children[2] as usize] = node_2;
+    
+        // If the range doesnt divide by 4 evenly, will pad the rest on the end. It could be better to
+        // balance the slack across the first three ranges.
+        let range_slack = range - ((range / 4) * 4);
+
+        let mut node_3 = QBVHNode::new();
+        construct_qbvh(objects, t0, t1, bvh, &mut node_3, start + split_step * 3, start + split_step + range_slack * 4);
+        bvh[cur_node.children[2] as usize] = node_3;
+
+        cur_node.num_children = 4;
+        merge_bounds_from_children(cur_node, bvh);
+    }
+
+}
+
 struct RGBImage {
     width: usize,
     height: usize,
@@ -809,18 +1062,24 @@ fn main() {
     let start_t = 0.0;
     let end_t = 1.0;
 
+    let obj_count = objects.len();
+
     let mut bvh_tree : Vec<BVHNode> = Vec::new();
     let mut bvh_root = BVHNode::new();
-    let obj_count = objects.len();
     construct_bvh(&mut objects, start_t, end_t, &mut bvh_tree, &mut bvh_root, 0, obj_count);
-
     let bvh = BVH { root: bvh_root, tree: bvh_tree };
+
+    // let mut qbvh_tree : Vec<QBVHNode> = Vec::new();
+    // let mut qbvh_root = QBVHNode::new();
+    // construct_qbvh(&mut objects, start_t, end_t, &mut qbvh_tree, &mut qbvh_root, 0, obj_count);
+    // let qbvh = QBVH { root: qbvh_root, tree: qbvh_tree };
+
     let world = World::construct(&objects);
 
     println!("Finished setup. Begin rendering...");
     let measure_start = Instant::now();
 
-    let sample_count = 64;
+    let sample_count = 8;
 
     for row in 0..image.height {
         for col in 0..image.width {
