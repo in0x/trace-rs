@@ -15,11 +15,24 @@ fn _seedable_rand() -> f32 {
 }
 
 pub fn rand_f32() -> f32 {
-    random_fast_rng::local_rng().gen()
+    // random_fast_rng::local_rng().gen()
+    _seedable_rand()
 }
 
 pub fn rand_int() -> u32 {
-    random_fast_rng::local_rng().gen()
+    // random_fast_rng::local_rng().gen()
+    _seedable_rand() as u32
+}
+
+/// Finds the next largest power of base that is less than or equal to num.
+pub fn next_power_of_n_le(num: usize, base: usize) -> usize {
+    let mut pow = 1;
+
+    while base.pow(pow + 1) <= num {
+        pow += 1;
+    }
+
+    base.pow(pow)
 }
 
 pub fn clamp(x: f32, min: f32, max: f32) -> f32 {
@@ -64,6 +77,15 @@ impl Vec3 {
 
     pub fn random_range(min: f32, max: f32) -> Vec3 {
         Vec3 { x: rand_in_range(min, max), y: rand_in_range(min, max), z: rand_in_range(min, max) }
+    }
+
+    pub fn at(&self, idx: usize) -> f32 {
+        match idx {
+            0 => self.x,
+            1 => self.y,
+            2 => self.z,
+            _ => unreachable!()
+        }
     }
 }
 
@@ -233,6 +255,18 @@ mod test {
             const DEFAULT_EPSILON: f32 = 0.000000001;
             assert_nearly_eq!($v1, $v2, DEFAULT_EPSILON);
         };
+    }
+
+    #[test]
+    fn test_next_power_of_n_le() {
+        let pow_4 = next_power_of_n_le(484, 4);
+        assert_eq!(pow_4, 256);
+
+        let pow_2 = next_power_of_n_le(72, 2);
+        assert_eq!(pow_2, 64);
+
+        let pow_2_noop = next_power_of_n_le(64, 2);
+        assert_eq!(pow_2_noop, 64);
     }
 
     #[test]

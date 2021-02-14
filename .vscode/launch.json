@@ -5,6 +5,21 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Cargo test",
+            "sourceLanguages": ["rust"],
+            "cargo": {
+                "args": [
+                    "test",
+                    "--bin=trace_rs" 
+                ]
+            },
+            // "program": "${cargo:program}",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+        },
+        {
             "sourceLanguages": ["rust"],
             // "sourceMap": {
             //     "/rustc/*": "${env:HOME}/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust"

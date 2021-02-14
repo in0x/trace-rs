@@ -183,7 +183,7 @@ impl f32x4 {
     pub fn equal(a: f32x4, b: f32x4) -> bool {
         unsafe {
             let eq_mask = vceqq_f32(a.m, b.m);
-            u32x4::vmovemaskq_u32(eq_mask) != 15
+            u32x4::vmovemaskq_u32(eq_mask) == 15
         }
     }
 
@@ -368,12 +368,47 @@ mod test {
         }
     }
 
+    fn print_fx4(v: float32x4_t) {
+        unsafe {
+            let x : f32 = simd_extract(v, 0);
+            let y : f32 = simd_extract(v, 1);
+            let z : f32 = simd_extract(v, 2);
+            let w : f32 = simd_extract(v, 3);
+    
+            println!("{} {} {} {}", x, y, z, w);
+        }
+    }
+
+    #[test]
+    fn test_equal_f32() {
+        {
+            let a = f32x4::splat(0.0);
+            let b = f32x4::splat(0.0);
+            assert!(f32x4::equal(a, b));
+        }
+
+        {
+            let a = f32x4::set(1.2, 3.42, 0.0, 9.999);
+            let b = f32x4::set(1.2, 3.42, 0.0, 9.999);
+            assert!(f32x4::equal(a, b));
+        }
+
+        {
+            let a = f32x4::set(1.2, 3.42, 0.0, 9.999);
+            let b = f32x4::set(142.2, 3.42, 0.0, 42.223);
+            assert!(f32x4::equal(a, b) == false);
+        }
+    }
+
     #[test]
     fn test_swizzle_f32() {
         let a = f32x4::set(1.0, 2.0, 3.0, 4.0);
         let b = f32x4::set(2.0, 3.0, 1.0, 4.0);
+        print_fx4(a.m);
+        print_fx4(b.m);
 
         let c = f32x4::swizzle(a, 1, 2, 0, 3);
+        print_fx4(c.m);
     
         assert!(f32x4::equal(c, b));
     }
@@ -407,7 +442,7 @@ mod test {
         }
     }
 
-    fn print_x4(v: uint32x4_t) {
+    fn print_ux4(v: uint32x4_t) {
         unsafe {
             let x : u32 = simd_extract(v, 0);
             let y : u32 = simd_extract(v, 1);
@@ -424,7 +459,7 @@ mod test {
             println!("Test 1");
             let a = f32x4::splat(0.0);
             let mask = f32x4::cmp_gt(a, a);
-            print_x4(mask.m);
+            print_ux4(mask.m);
             assert_eq!(mask.any(), false);
         }
         {
@@ -432,7 +467,7 @@ mod test {
             let a = f32x4::splat(5.0);
             let b = f32x4::splat(5.0);
             let mask = f32x4::cmp_eq(a, b);
-            print_x4(mask.m);
+            print_ux4(mask.m);
             assert_eq!(mask.any(), true);
         }
         {
@@ -440,7 +475,7 @@ mod test {
             let a = f32x4::set(5.0, 3.0, 4.0, 5.0);
             let b = f32x4::set(1.0, 2.0, 3.0, 4.0);
             let mask = f32x4::cmp_lt(a , b);
-            print_x4(mask.m);
+            print_ux4(mask.m);
             assert_eq!(mask.any(), false);
         }
         {
@@ -448,7 +483,7 @@ mod test {
             let a = f32x4::set(5.0, 3.0, 4.0, 5.0);
             let b = f32x4::set(1.0, 2.0, 3.0, 6.0);
             let mask = f32x4::cmp_lt(a , b);
-            print_x4(mask.m);
+            print_ux4(mask.m);
             assert_eq!(mask.any(), true);
         }
     }
