@@ -1,0 +1,16 @@
+{
+    "debug.showBreakpointsInOverviewRuler": true,
+    // "lldb.adapterType": "native",
+    "lldb.launch.env": {
+        "RUST_BACKTRACE": "1"
+    },
+    "lldb.launch.sourceLanguages": [
+        "cpp",
+        "rust"
+    ],
+    "lldb.adapterEnv": {
+        "LLDB_DEBUGSERVER_PATH": "/Users/philippwelsch/Documents/trace-rs/host_lldb.sh" 
+    },
+    "lldb.verboseLogging": true,
+    "lldb.library": "/Applications/Xcode.app/Contents/SharedFrameworks/LLDB.framework/Versions/A/LLDB",
+}

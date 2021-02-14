@@ -5,17 +5,25 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "OSX Debug",
+            "sourceLanguages": ["rust"],
+            // "sourceMap": {
+            //     "/rustc/*": "${env:HOME}/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust"
+            // },
             "type": "lldb",
             "request": "launch",
-            "program": "${workspaceFolder}/target/debug/trace_rs",
+            "name": "Debug executable 'trace_rs'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=trace_rs" 
+                ]
+            },
+            // "program": "${workspaceFolder}/target/debug/deps/trace_rs",
+            // "program": "${workspaceFolder}/target/debug/trace_rs",
             "args": [],
             "cwd": "${workspaceFolder}",
-            "stopOnEntry": false,
-            // "sourceLanguages": ["rust"],
-            // "sourceMap": {
-                // "/rustc/*": "${env:HOME}/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/src/rust"
-            // }
+            // "terminal": "external",
+            // "stopOnEntry": true
         },
         {
             "name": "win32 debug",

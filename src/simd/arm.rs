@@ -112,6 +112,14 @@ impl f32x4 {
         }
     }
 
+    pub fn cmp_le(a: f32x4, b: f32x4) -> u32x4 {
+        unsafe {
+            u32x4 {
+                m: vcleq_f32(a.m, b.m)
+            }
+        }
+    }
+
     pub fn cmp_eq(a: f32x4, b: f32x4) -> u32x4 {
         unsafe {
             u32x4 {
@@ -143,6 +151,22 @@ impl f32x4 {
         unsafe {
             f32x4 {
                 m: ffi_swizzle(v.m, c0, c1, c2, c3)
+            }
+        }
+    }
+
+    pub fn max(a: f32x4, b: f32x4) -> f32x4 {
+        unsafe {
+            f32x4 {
+                m: vmaxq_f32(a.m, b.m)
+            }
+        }
+    }
+
+    pub fn min(a: f32x4, b: f32x4) -> f32x4 {
+        unsafe {
+            f32x4 {
+                m: vminq_f32(a.m , b.m)
             }
         }
     }
@@ -256,6 +280,33 @@ impl u32x4 {
             u32x4 {
                 m: vandq_u32(a.m, b.m)
             }
+        }
+    }
+
+    pub fn or(a: u32x4, b: u32x4) -> u32x4 {
+        unsafe {
+            u32x4 {
+                m: vorrq_u32(a.m, b.m)
+            }
+        }
+    }
+
+    pub fn not(a: u32x4) -> u32x4 {
+        unsafe {
+            u32x4 {
+                m: vmvnq_u32(a.m)
+            }
+        }
+    }
+
+    pub fn get_flags(a: u32x4) -> [bool;4] {
+        unsafe {
+            let c0 : u32 = simd_extract(a.m, 0); 
+            let c1 : u32 = simd_extract(a.m, 1); 
+            let c2 : u32 = simd_extract(a.m, 2); 
+            let c3 : u32 = simd_extract(a.m, 3); 
+
+            [c0 != 0, c1 != 0, c2 != 0, c3 != 0]
         }
     }
 }

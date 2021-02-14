@@ -250,7 +250,7 @@ fn hit(world: &World, start: usize, len: usize, ray: Ray, t_min: f32, t_max: f32
     else {
         false
     }
-}    
+}   
 
 trait Hitable {
     fn hit(&self, ray: Ray, t_min: f32, t_max: f32, world: &World, out_hit: &mut HitRecord) -> bool;
@@ -299,7 +299,7 @@ fn hit_spheres(world: &World, start: usize, len: usize, ray: Ray, t_min: f32, t_
 
 fn sample_color(r: Ray, hit_tree: & dyn Hitable, world: &World, materials: &[Material], bounces: i32) -> Vec3 {
     let mut hit = HitRecord::new();
-
+    
     let mut color = vec3![1.0, 1.0, 1.0];
     let mut current_ray = r;
 
@@ -840,9 +840,8 @@ fn construct_bvh(objects: &mut[Sphere], time0: f32, time1: f32, bvh: &mut Vec<BV
 }
 
 enum BVHNodeType {
-    Joint, /// This node's children are BVHNodes.
-    Leaf,  /// This node's children are intersectibles.
-    EnumCount
+    Joint, // This node's children are BVHNodes.
+    Leaf,  // This node's children are intersectibles.
 }
 
 /// A QBVHNode has up to four children that it stores the bounds of.
@@ -869,7 +868,7 @@ impl QBVHNode {
             bb_max_y: [0.0, 0.0, 0.0, 0.0],
             bb_max_z: [0.0, 0.0, 0.0, 0.0],
             children: [-1, -1, -1, -1],
-            child_type: [BVHNodeType:: Joint, BVHNodeType:: Joint, BVHNodeType:: Joint, BVHNodeType:: Joint],
+            child_type: [BVHNodeType::Joint, BVHNodeType::Joint, BVHNodeType::Joint, BVHNodeType::Joint],
             num_children: 0
             // ^ We want to indicate what the children are, so we can avoid inserting
             // BVHNodes for single object children since that just wastes space.
@@ -880,6 +879,131 @@ impl QBVHNode {
 struct QBVH {
     root: QBVHNode,
     tree: Vec<QBVHNode>
+}
+
+impl QBVH {
+    fn hit_node(child_idx: usize, hit_any_node: &mut bool, r: Ray, t_min: f32, closest_t: &mut f32, current_node: &QBVHNode, bvh: &QBVH, world: &World, out_hit: &mut HitRecord) {
+        let node_idx = current_node.children[child_idx];
+        assert_ne!(node_idx, -1);
+        match current_node.child_type[child_idx] {
+            BVHNodeType::Leaf => {
+                // TODO(); for hit test: a leaf has 4 spheres
+                if hit(world, node_idx as usize, 1, r, t_min, *closest_t, out_hit) {
+                    *hit_any_node = true;
+                    *closest_t = out_hit.t;
+                }                    
+            },
+            BVHNodeType::Joint => {
+                let child_node = &bvh.tree[node_idx as usize];
+                if QBVH::hit_world(r, t_min, *closest_t, child_node, bvh, world, out_hit) {
+                    *hit_any_node = true;
+                    *closest_t = out_hit.t;
+                }
+            }
+       }
+    }
+
+    fn hit_world(r: Ray, t_min: f32, t_max: f32, current_node: &QBVHNode, bvh: &QBVH, world: &World, out_hit: &mut HitRecord) -> bool {        
+        let (hit_mask, any_hit) = QBVH::hit_node_children(current_node, r, t_min, t_max);
+        if !any_hit {
+            return false;
+        }
+
+        let mut hit_any_node = false;
+        let mut closest_t = t_max;
+
+        if hit_mask[0] {
+            QBVH::hit_node(0, &mut hit_any_node, r, t_min, &mut closest_t, current_node, bvh, world, out_hit);            
+        }
+        if hit_mask[1] {
+            QBVH::hit_node(1, &mut hit_any_node, r, t_min, &mut closest_t, current_node, bvh, world, out_hit);            
+        }
+        if hit_mask[2] {
+            QBVH::hit_node(2, &mut hit_any_node, r, t_min, &mut closest_t, current_node, bvh, world, out_hit);            
+        }
+        if hit_mask[3] {
+            QBVH::hit_node(3, &mut hit_any_node, r, t_min, &mut closest_t, current_node, bvh, world, out_hit);            
+        }
+
+        return hit_any_node;
+    }
+
+    fn hit_node_children(node: &QBVHNode, r: Ray, t_min: f32, t_max: f32) -> ([bool;4], bool) {
+        let min_x = f32x4::loadu(&node.bb_min_x);
+        let min_y = f32x4::loadu(&node.bb_min_y);
+        let min_z = f32x4::loadu(&node.bb_min_z);
+        
+        let max_x = f32x4::loadu(&node.bb_max_x);
+        let max_y = f32x4::loadu(&node.bb_max_y);
+        let max_z = f32x4::loadu(&node.bb_max_z);
+    
+        let ro_x = f32x4::splat(r.origin.x);
+        let ro_y = f32x4::splat(r.origin.y);
+        let ro_z = f32x4::splat(r.origin.z);
+    
+        let inv_rd_x = f32x4::splat(1.0 / r.direction.x);
+        let inv_rd_y = f32x4::splat(1.0 / r.direction.y);
+        let inv_rd_z = f32x4::splat(1.0 / r.direction.z);
+    
+        let zero_4 =  f32x4::splat(0.0);
+        let mut t_min_4 = f32x4::splat(t_min);
+        let mut t_max_4 = f32x4::splat(t_max);
+        
+        let any_x_miss;
+        {
+            let t0_x = f32x4::mul(f32x4::sub(min_x, ro_x), inv_rd_x);
+            let t1_x = f32x4::mul(f32x4::sub(max_x, ro_x), inv_rd_x);
+        
+            let inv_rd_x_lt0 = f32x4::cmp_lt(inv_rd_x, zero_4);
+            let swap_t0_x = f32x4::blendv(t1_x, t0_x, inv_rd_x_lt0);
+            let swap_t1_x = f32x4::blendv(t0_x, t1_x, inv_rd_x_lt0);
+        
+            t_min_4 = f32x4::max(t_min_4, swap_t0_x);
+            t_max_4 = f32x4::min(t_max_4, swap_t1_x);
+
+            any_x_miss = f32x4::cmp_le(t_max_4, t_min_4);
+        }
+
+        let any_y_miss;
+        {
+            let t0_y = f32x4::mul(f32x4::sub(min_y, ro_y), inv_rd_y);
+            let t1_y = f32x4::mul(f32x4::sub(max_y, ro_y), inv_rd_y);
+
+            let inv_rd_y_lt0 = f32x4::cmp_lt(inv_rd_y, zero_4);
+            let swap_t0_y = f32x4::blendv(t1_y, t0_y, inv_rd_y_lt0);
+            let swap_t1_y = f32x4::blendv(t0_y, t1_y, inv_rd_y_lt0);
+        
+            t_min_4 = f32x4::max(t_min_4, swap_t0_y);
+            t_max_4 = f32x4::min(t_max_4, swap_t1_y);
+        
+            any_y_miss = f32x4::cmp_le(t_max_4, t_min_4);
+        }
+        
+        let any_z_miss;
+        {
+            let t0_z = f32x4::mul(f32x4::sub(min_z, ro_z), inv_rd_z);
+            let t1_z = f32x4::mul(f32x4::sub(max_z, ro_z), inv_rd_z);
+
+            let inv_rd_z_lt0 = f32x4::cmp_lt(inv_rd_z, zero_4);
+            let swap_t0_z = f32x4::blendv(t1_z, t0_z, inv_rd_z_lt0);
+            let swap_t1_z = f32x4::blendv(t0_z, t1_z, inv_rd_z_lt0);
+        
+            t_min_4 = f32x4::max(t_min_4, swap_t0_z);
+            t_max_4 = f32x4::min(t_max_4, swap_t1_z);
+        
+            any_z_miss = f32x4::cmp_le(t_max_4, t_min_4);
+        }
+        
+        let any_miss = u32x4::not(u32x4::or(u32x4::or(any_x_miss, any_y_miss), any_z_miss));
+
+        (u32x4::get_flags(any_miss), any_miss.any())
+    }
+}
+
+impl Hitable for QBVH {
+    fn hit(&self, ray: Ray, t_min: f32, t_max: f32, world: &World, out_hit: &mut HitRecord) -> bool {
+        return QBVH::hit_world(ray, t_min, t_max, &self.root, &self, world, out_hit);
+    }
 }
 
 /// Retrieves the bounds for the child of node at child_idx.
@@ -904,7 +1028,11 @@ fn set_qbvh_aabb(node: &mut QBVHNode, child_idx: u8, bb: &AABB) {
 /// Calculates the merged bounds of child of this node and assigns it 
 /// to the appropriate slot in this node.
 fn merge_bounds_from_children(node: &mut QBVHNode, qbvh: &Vec<QBVHNode>) {
-    for child_i in 0..node.num_children {
+    for i in 0..node.num_children {
+        let child_i = node.children[i as usize];
+        if child_i == -1 {
+            continue;
+        }
 
         let child_node = &qbvh[child_i as usize];
         assert_ne!(child_node.num_children, 0);
@@ -914,20 +1042,18 @@ fn merge_bounds_from_children(node: &mut QBVHNode, qbvh: &Vec<QBVHNode>) {
             bounds = AABB::merge(&bounds, &get_qbvh_aabb(&child_node, node_i));
         }
 
-        set_qbvh_aabb(node, child_i, &bounds);
+        set_qbvh_aabb(node, i, &bounds);
     }
 }
 
 
 fn construct_qbvh(objects: &mut[Sphere], t0: f32, t1: f32, bvh: &mut Vec<QBVHNode>, cur_node: &mut QBVHNode, start: usize, end: usize) {
-
     let split_axis = random_axis();
     let range = end - start;
 
     let sub_objects = &mut objects[start..end];
 
     if range <= 4 {
-
         for i in 0..range {          
             let aabb = objects[i].calc_aabb(t0, t1);
             cur_node.bb_min_x[i] = aabb.min.x;
@@ -941,27 +1067,26 @@ fn construct_qbvh(objects: &mut[Sphere], t0: f32, t1: f32, bvh: &mut Vec<QBVHNod
             cur_node.num_children += 1;
         }
 
-        // pad if we dont have 4 nodes to fill with
-        // TODO(): we should probably assert on this in the hit logic. The bvh
-        // for this child will be all 0, so we should never hit it and get an idx of -1.
         for i in range..4 {
-            cur_node.children[i] = -1;
             cur_node.child_type[i] = BVHNodeType::Leaf;
         }
     }
-    // TODO(): Do we insert a case here we handle setting up leaf nodes?
-    // Or we could replace the above case with one that checks the next divide.
     else if range < 16 {
-        // next nodes will end up being leaves, should pad to four
-        // or should we? is full 4 prefereable? Probably, better simd occupancy
+        assert_ne!(range, 0);
+        sort(sub_objects, split_axis, t0, t1);
 
         let mut start_idx = start as i32;
         let mut nodes_to_insert = range as i32;
         while nodes_to_insert > 0 {
-            let num_children = if nodes_to_insert >= 4 { 4 } else { nodes_to_insert };
+            let new_node_idx = bvh.len();
+            bvh.push(QBVHNode::new());
+            
             let mut node = QBVHNode::new();
+            let num_children = if nodes_to_insert >= 4 { 4 } else { nodes_to_insert };
             construct_qbvh(objects, t0, t1, bvh, &mut node, start_idx as usize, (start_idx + num_children) as usize);
-
+            
+            cur_node.children[cur_node.num_children as usize] = new_node_idx as i32;
+            bvh[new_node_idx] = node;
             cur_node.num_children += 1;
 
             start_idx += num_children;
@@ -981,28 +1106,26 @@ fn construct_qbvh(objects: &mut[Sphere], t0: f32, t1: f32, bvh: &mut Vec<QBVHNod
 
         let split_step = range / 4;
 
-        let next_node_idx = bvh.len() as i32;
-        cur_node.children[0] = next_node_idx;
-        cur_node.children[1] = next_node_idx + 1;
-        cur_node.children[2] = next_node_idx + 2;
-        cur_node.children[3] = next_node_idx + 3;
-
-        bvh.push(QBVHNode::new());
-        bvh.push(QBVHNode::new());
-        bvh.push(QBVHNode::new());
-        bvh.push(QBVHNode::new());
-
-        // TODO(); Should we try to fill up as many with new nodes with 4 children and discard the rest? 
+        // might be better to push whole level at once into array.
 
         let mut node_0 = QBVHNode::new();
+        cur_node.children[0] = bvh.len() as i32;
+        bvh.push(QBVHNode::new());
+
         construct_qbvh(objects, t0, t1, bvh, &mut node_0, start, start + split_step);
         bvh[cur_node.children[0] as usize] = node_0;
 
         let mut node_1 = QBVHNode::new();
+        cur_node.children[1] = bvh.len() as i32;
+        bvh.push(QBVHNode::new());
+
         construct_qbvh(objects, t0, t1, bvh, &mut node_1, start + split_step, start + split_step * 2);
         bvh[cur_node.children[1] as usize] = node_1;
-
+        
         let mut node_2 = QBVHNode::new();
+        cur_node.children[2] = bvh.len() as i32;
+        bvh.push(QBVHNode::new());
+
         construct_qbvh(objects, t0, t1, bvh, &mut node_2, start + split_step * 2, start + split_step * 3);
         bvh[cur_node.children[2] as usize] = node_2;
     
@@ -1011,8 +1134,11 @@ fn construct_qbvh(objects: &mut[Sphere], t0: f32, t1: f32, bvh: &mut Vec<QBVHNod
         let range_slack = range - ((range / 4) * 4);
 
         let mut node_3 = QBVHNode::new();
-        construct_qbvh(objects, t0, t1, bvh, &mut node_3, start + split_step * 3, start + split_step + range_slack * 4);
-        bvh[cur_node.children[2] as usize] = node_3;
+        cur_node.children[3] = bvh.len() as i32;
+        bvh.push(QBVHNode::new());
+
+        construct_qbvh(objects, t0, t1, bvh, &mut node_3, start + (split_step * 3), start + (split_step * 4) + range_slack);
+        bvh[cur_node.children[3] as usize] = node_3;
 
         cur_node.num_children = 4;
         merge_bounds_from_children(cur_node, bvh);
@@ -1036,6 +1162,71 @@ impl RGBImage {
         self.buffer[write_idx] =     color.x as u8;
         self.buffer[write_idx + 1] = color.y as u8;
         self.buffer[write_idx + 2] = color.z as u8;
+    }
+}
+
+fn trav_qbvh(node: &QBVHNode, tree: &Vec<QBVHNode>, record: &mut Vec<Vec<[i32;9]>>, cur_idx: i32, depth: usize) {
+    if record.len() <= depth {
+        record.push(Vec::new());
+    }
+
+    let is_leaf_0 = match node.child_type[0] {
+        BVHNodeType::Joint => 0,
+        BVHNodeType::Leaf => 1,
+    };
+
+    let is_leaf_1 = match node.child_type[1] {
+        BVHNodeType::Joint => 0,
+        BVHNodeType::Leaf => 1,
+    };
+
+    let is_leaf_2 = match node.child_type[2] {
+        BVHNodeType::Joint => 0,
+        BVHNodeType::Leaf => 1,
+    };
+
+    let is_leaf_3 = match node.child_type[3] {
+        BVHNodeType::Joint => 0,
+        BVHNodeType::Leaf => 1,
+    };
+
+    record[depth].push([cur_idx, 
+        node.children[0], is_leaf_0, 
+        node.children[1], is_leaf_1, 
+        node.children[2], is_leaf_2, 
+        node.children[3], is_leaf_3]);
+
+    for i in 0..node.num_children {
+        match node.child_type[i as usize] {
+            BVHNodeType::Joint => {
+                let node_idx = node.children[i as usize];
+                trav_qbvh(&tree[node_idx as usize], tree, record, node_idx, depth + 1);    
+            },
+            _ => {}
+        } 
+    }
+}
+
+fn get_node_decorator(node_flag: i32) -> &'static str {
+    if node_flag == 0 {
+        return "J";
+    }
+    else {
+        return "L";
+    }
+}
+
+fn print_trav_record(record: &Vec<Vec<[i32;9]>>) {
+    for row in record {
+        for entry in row {
+            print!("{}: [{}:{},{}:{},{}:{},{}:{}] - ", 
+            entry[0], 
+            get_node_decorator(entry[2]), entry[1], 
+            get_node_decorator(entry[4]), entry[3], 
+            get_node_decorator(entry[6]), entry[5], 
+            get_node_decorator(entry[8]), entry[7]);
+        }
+        print!("\n");
     }
 }
 
@@ -1064,15 +1255,19 @@ fn main() {
 
     let obj_count = objects.len();
 
-    let mut bvh_tree : Vec<BVHNode> = Vec::new();
-    let mut bvh_root = BVHNode::new();
-    construct_bvh(&mut objects, start_t, end_t, &mut bvh_tree, &mut bvh_root, 0, obj_count);
-    let bvh = BVH { root: bvh_root, tree: bvh_tree };
+    // let mut bvh_tree : Vec<BVHNode> = Vec::new();
+    // let mut bvh_root = BVHNode::new();
+    // construct_bvh(&mut objects, start_t, end_t, &mut bvh_tree, &mut bvh_root, 0, obj_count);
+    // let bvh = BVH { root: bvh_root, tree: bvh_tree };
 
-    // let mut qbvh_tree : Vec<QBVHNode> = Vec::new();
-    // let mut qbvh_root = QBVHNode::new();
-    // construct_qbvh(&mut objects, start_t, end_t, &mut qbvh_tree, &mut qbvh_root, 0, obj_count);
-    // let qbvh = QBVH { root: qbvh_root, tree: qbvh_tree };
+    let mut qbvh_tree : Vec<QBVHNode> = Vec::new();
+    let mut qbvh_root = QBVHNode::new();
+    construct_qbvh(&mut objects, start_t, end_t, &mut qbvh_tree, &mut qbvh_root, 0, obj_count);
+    let bvh = QBVH { root: qbvh_root, tree: qbvh_tree };
+
+    let mut record = Vec::new();
+    trav_qbvh(&bvh.root, &bvh.tree, &mut record, -1, 0);
+    print_trav_record(&record);
 
     let world = World::construct(&objects);
 
