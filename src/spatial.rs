@@ -179,9 +179,8 @@ fn hit_simd(world: &World, start: usize, len: usize, r: Ray, t_min: f32, t_max: 
     let first_idx = start as i32;
     let mut cur_id = i32x4::set(first_idx, first_idx + 1, first_idx + 2, first_idx + 3);
 
-    let end = start + len;
-    let sphere_count = end - (end % SIMD_WIDTH) - SIMD_WIDTH;
-    for i in (start..sphere_count).step_by(SIMD_WIDTH) {
+    let end = start + len - (len % SIMD_WIDTH);
+    for i in (start..end).step_by(SIMD_WIDTH) {
         let vel_x =  f32x4::loadu(&world.animations.velocity_x[i..i+4]);
         let vel_y =  f32x4::loadu(&world.animations.velocity_y[i..i+4]);
         let vel_z =  f32x4::loadu(&world.animations.velocity_z[i..i+4]);
@@ -321,7 +320,7 @@ fn hit_spheres(world: &World, start: usize, len: usize, ray: Ray, t_min: f32, t_
         }
         
         let end = start + len;
-        found_hit |= hit(world, end - (end % SIMD_WIDTH), end % SIMD_WIDTH, ray, t_min, closest_t, out_hit);
+        found_hit |= hit(world, end - (len % SIMD_WIDTH), len % SIMD_WIDTH, ray, t_min, closest_t, out_hit);
     }
     else {
         found_hit = hit(world, start, len, ray, t_min, closest_t, out_hit);
@@ -347,8 +346,8 @@ impl QBVH {
         
         if child.is_leaf() {
             let (c_idx, c_count) = child.leaf_get_idx_count();
-            // if hit(world, c_idx as usize, c_count as usize, r, t_min, *closest_t, out_hit) {
-            if hit_spheres(world, c_idx as usize, c_count as usize, r, t_min, *closest_t, out_hit) {
+            if hit(world, c_idx as usize, c_count as usize, r, t_min, *closest_t, out_hit) {
+            // if hit_spheres(world, c_idx as usize, c_count as usize, r, t_min, *closest_t, out_hit) {
                 *hit_any_node = true;
                 *closest_t = out_hit.t;
             }

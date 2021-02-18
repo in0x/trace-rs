@@ -297,14 +297,8 @@ fn main() {
     let start_t = 0.0;
     let end_t = 0.0;
 
-    let obj_count = objects.len();
-
-    // let mut bvh_tree : Vec<BVHNode> = Vec::new();
-    // let mut bvh_root = BVHNode::new();
-    // construct_bvh(&mut objects, start_t, end_t, &mut bvh_tree, &mut bvh_root, 0, obj_count);
-    // let bvh = BVH { root: bvh_root, tree: bvh_tree };
-
     let mut bvh = QBVH::new();
+    let obj_count = objects.len();
     bvh.build(&mut objects, 0, obj_count, -1, 0, 0, start_t, end_t);
 
     let world = World::construct(&objects);
