@@ -792,6 +792,10 @@ enum BVHNodeType {
     EmptyLeaf, // This node has no children.
 }
 
+struct PackedIdx {
+    value: i32
+}
+
 /// A QBVHNode has up to four children that it stores the bounds of.
 /// This allows fast intersection testing by testing all 4 at once through SIMD.
 struct QBVHNode {
@@ -801,9 +805,106 @@ struct QBVHNode {
     bb_max_x: [f32; 4],
     bb_max_y: [f32; 4],
     bb_max_z: [f32; 4],
-    children: [i32; 4],
-    num_children: [u16; 4], 
-    child_type: [BVHNodeType; 4],
+    children: [PackedIdx; 4],
+}
+
+impl PackedIdx {
+    fn new_joint(idx: u32) -> PackedIdx {
+        PackedIdx {
+            value: (idx as i32) & !i32::MIN
+        }
+    }
+
+    fn joint_get_idx(&self) -> u32 {
+        debug_assert_ne!(self.is_leaf(), true);
+        self.value as u32
+    }
+
+    fn new_empty_leaf() -> PackedIdx {
+        PackedIdx {
+            value: i32::MIN
+        }
+    }
+
+    const MAX_IDX: u32 = 8388607;
+    const MAX_COUNT: u32 = 255; 
+
+    /// Encodes bits as: IsChild:[1] Number of primitves:[8] start idx[23]:
+    fn new_leaf(idx: u32, count: u32) -> PackedIdx {
+        debug_assert!(idx <= PackedIdx::MAX_IDX, "Val: {}, Max: {}", idx, PackedIdx::MAX_IDX);
+        debug_assert!(count <= PackedIdx::MAX_COUNT, "Val: {}, Max: {}", count, PackedIdx::MAX_COUNT);
+
+        let packed_idx = ((!0 >> 9) & idx) as i32;
+        let packed_count = (count << 23) as i32;
+    
+        PackedIdx {
+            value: i32::MIN | packed_count | packed_idx
+        }
+    }
+
+    fn is_leaf(&self) -> bool {
+        (self.value & i32::MIN) == i32::MIN
+    }
+
+    fn is_empty_leaf(&self) -> bool {
+        self.value == i32::MIN
+    }
+
+    fn leaf_get_idx_count(&self) -> (u32, u32) {
+        debug_assert!(self.is_leaf());
+
+        let idx = self.value as u32 & (!0 >> 9);
+        let count = (self.value & !i32::MIN) >> 23;
+
+        (idx as u32, count as u32)
+    }
+}
+
+#[cfg(test)]
+mod packed_idx_tests {
+    use super::*;
+
+    #[test]
+    fn test_is_leaf()
+    {
+        let a = PackedIdx::new_leaf(4023, 15);
+        assert!(a.is_leaf());
+    
+        let b = PackedIdx::new_empty_leaf();
+        assert!(b.is_leaf());
+    
+        let c = PackedIdx::new_joint(u32::MAX);
+        assert!(c.is_leaf() == false);
+    
+        let d = PackedIdx::new_joint(239);
+        assert!(d.is_leaf() == false);
+    }
+
+    #[test]
+    fn test_get_leaf_data() {
+        {
+            let idx = 4023;
+            let count = 15;
+
+            let x = PackedIdx::new_leaf(idx, count);
+            let (i, c) = x.leaf_get_idx_count();
+            
+            assert_eq!(idx, i);
+            assert_eq!(count, c);
+        }
+        {
+            let x = PackedIdx::new_empty_leaf();
+            let (i, c) = x.leaf_get_idx_count();
+            assert_eq!(i, 0);
+            assert_eq!(c, 0);
+        }    
+        {
+            let x = PackedIdx::new_leaf(PackedIdx::MAX_IDX, PackedIdx::MAX_COUNT);
+            let (i, c) = x.leaf_get_idx_count();
+            assert_eq!(i, PackedIdx::MAX_IDX);
+            assert_eq!(c, PackedIdx::MAX_COUNT);
+        }
+    }
 }
 
 impl QBVHNode {
@@ -815,26 +916,20 @@ impl QBVHNode {
             bb_max_x: [0.0, 0.0, 0.0, 0.0],
             bb_max_y: [0.0, 0.0, 0.0, 0.0],
             bb_max_z: [0.0, 0.0, 0.0, 0.0],
-            children: [INVALID_GEO_IDX, INVALID_GEO_IDX, INVALID_GEO_IDX, INVALID_GEO_IDX],
-            num_children: [0, 0, 0, 0],
-            child_type: [BVHNodeType::Joint, BVHNodeType::Joint, BVHNodeType::Joint, BVHNodeType::Joint],
+            children: [PackedIdx::new_empty_leaf(), PackedIdx::new_empty_leaf(), PackedIdx::new_empty_leaf(), PackedIdx::new_empty_leaf()],
         }
     }
 
     fn set_child_joint_node(&mut self, child: usize, index: usize) {
-        self.children[child] = index as i32;
-        self.child_type[child] = BVHNodeType::Joint;
+        self.children[child] = PackedIdx::new_joint(index as u32)
     }
 
     fn set_child_leaf_node(&mut self, child: usize, size: usize, index: usize) {
         if size != 0 {
-            self.children[child] = index as i32;
-            self.num_children[child] = size as u16;
-            self.child_type[child] = BVHNodeType::Leaf;
+            self.children[child] = PackedIdx::new_leaf(index as u32, size as u32)
         }
         else {
-            self.children[child] = INVALID_GEO_IDX;
-            self.child_type[child] = BVHNodeType::EmptyLeaf;
+            self.children[child] = PackedIdx::new_empty_leaf()
         }
     }
 
@@ -855,26 +950,25 @@ struct QBVH {
 
 impl QBVH {
     fn hit_node(child_idx: usize, hit_any_node: &mut bool, r: Ray, t_min: f32, closest_t: &mut f32, current_node: &QBVHNode, bvh: &QBVH, world: &World, out_hit: &mut HitRecord) {
-        let node_idx = current_node.children[child_idx];
-        assert_ne!(node_idx, INVALID_GEO_IDX);
-        match current_node.child_type[child_idx] {
-            BVHNodeType::Leaf => {
-                let num_spheres = current_node.num_children[child_idx];
-                if hit(world, node_idx as usize, num_spheres as usize, r, t_min, *closest_t, out_hit) {
-                // if hit_spheres(world, node_idx as usize, num_spheres as usize, r, t_min, *closest_t, out_hit) {
-                    *hit_any_node = true;
-                    *closest_t = out_hit.t;
-                }                    
-            },
-            BVHNodeType::Joint => {
-                let child_node = &bvh.tree[node_idx as usize];
-                if QBVH::hit_world(r, t_min, *closest_t, child_node, bvh, world, out_hit) {
-                    *hit_any_node = true;
-                    *closest_t = out_hit.t;
-                }
-            },
-            BVHNodeType::EmptyLeaf => unreachable!()
-       }
+        
+        let child = &current_node.children[child_idx];
+        assert_eq!(child.is_empty_leaf(), false);
+        
+        if child.is_leaf() {
+            let (c_idx, c_count) = child.leaf_get_idx_count();
+            if hit(world, c_idx as usize, c_count as usize, r, t_min, *closest_t, out_hit) {
+            // if hit_spheres(world, node_idx as usize, num_spheres as usize, r, t_min, *closest_t, out_hit) {
+                *hit_any_node = true;
+                *closest_t = out_hit.t;
+            }                    
+        }
+        else {
+            let child_node = &bvh.tree[child.joint_get_idx() as usize];
+            if QBVH::hit_world(r, t_min, *closest_t, child_node, bvh, world, out_hit) {
+                *hit_any_node = true;
+                *closest_t = out_hit.t;
+            }
+        }
     }
 
     fn hit_world(r: Ray, t_min: f32, t_max: f32, current_node: &QBVHNode, bvh: &QBVH, world: &World, out_hit: &mut HitRecord) -> bool {        
@@ -1042,7 +1136,7 @@ impl QBVH {
             self.create_leaf_node(start, end, parent, child, &bounds);
             return;
         }
-    
+            
         let (split_axis, split_point) = pick_split_axis(objects, start, end, t0, t1);
         let split_idx = partition(objects, split_axis, split_point, start, end, t0, t1);
     
@@ -1103,17 +1197,17 @@ fn main() {
     generate_world_data(&mut objects, &mut materials);
     
     let start_t = 0.0;
-    let end_t = 1.0;
+    let end_t = 0.0;
 
     let obj_count = objects.len();
 
-    let mut bvh_tree : Vec<BVHNode> = Vec::new();
-    let mut bvh_root = BVHNode::new();
-    construct_bvh(&mut objects, start_t, end_t, &mut bvh_tree, &mut bvh_root, 0, obj_count);
-    let bvh = BVH { root: bvh_root, tree: bvh_tree };
+    // let mut bvh_tree : Vec<BVHNode> = Vec::new();
+    // let mut bvh_root = BVHNode::new();
+    // construct_bvh(&mut objects, start_t, end_t, &mut bvh_tree, &mut bvh_root, 0, obj_count);
+    // let bvh = BVH { root: bvh_root, tree: bvh_tree };
 
-    // let mut bvh = QBVH { tree: Vec::new() };
-    // bvh.build(&mut objects, 0, obj_count, -1, 0, 0, start_t, end_t);
+    let mut bvh = QBVH { tree: Vec::new() };
+    bvh.build(&mut objects, 0, obj_count, -1, 0, 0, start_t, end_t);
 
     let world = World::construct(&objects);
 
