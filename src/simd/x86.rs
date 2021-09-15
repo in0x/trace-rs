@@ -1,10 +1,5 @@
 use std::arch::x86_64::*;
 
-extern "platform-intrinsic" {
-    pub fn simd_extract<T, U>(x: T, idx: u32) -> U;
-    pub fn simd_div<T>(x: T, y: T) -> T;
-}
-
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone)]
 pub struct f32x4 { pub m: __m128 }
@@ -17,8 +12,7 @@ pub struct i32x4 { pub m: __m128i }
 #[derive(Copy, Clone)]
 pub struct u32x4 { pub m: __m128i }
 
-// TODO: move tests to a separate file (they should be platform agnostic)
-// TODO: how does the compiler do with inlining here?
+// @TODO how does the compiler do with inlining here?
 
 macro_rules! MY_MM_SHUFFLE {
     ($fp3: expr, $fp2: expr, $fp1: expr, $fp0: expr) => {
@@ -228,49 +222,9 @@ impl u32x4 {
 
     pub fn get_flags(a: u32x4) -> [bool;4] {
     unsafe {
-        let c0 : i64 = simd_extract(a.m, 0); 
-        let c1 : i64 = simd_extract(a.m, 1); 
-        let c2 : i64 = simd_extract(a.m, 2); 
-        let c3 : i64 = simd_extract(a.m, 3); 
+        let mut store : [i32;4] = [0, 0, 0 ,0];
+        _mm_storeu_epi32(store.as_mut_ptr(), a.m);
 
-        [c0 != 0, c1 != 0, c2 != 0, c3 != 0]
+        [store[0] != 0, store[1] != 0, store[2] != 0, store[3] != 0]
     }}
 }
-
-// impl f32x4 {
-//     pub fn splat(v: f32) -> f32x4 {
-//         f32x4(_mm_set_ps1(v))
-//     }   
-// }
-
-// macro_rules! MY_MM_SHUFFLE {
-//     ($fp3: expr, $fp2: expr, $fp1: expr, $fp0: expr) => {
-//         (($fp3 << 6) | ($fp2 << 4) | ($fp1 << 2) | $fp0)
-//     };
-// }
-
-// macro_rules! MY_SHUFFLE_4 {
-//     ($v: expr, $x: expr, $y: expr, $z: expr, $w: expr) => {
-//         _mm_shuffle_ps($v, $v, MY_MM_SHUFFLE!($w,$z,$y,$x))
-//     };
-// }
-
-// fn select(a: __m128, b: __m128, cond: __m128) -> __m128 {
-//     unsafe {
-//         _mm_blendv_ps(a, b, cond)
-//     }
-// }
-
-// fn selecti(a: __m128i, b: __m128i, cond: __m128) -> __m128i {
-//     unsafe {
-//         _mm_blendv_epi8(a, b, _mm_castps_si128(cond))
-//     }
-// }
-
-// fn hmin(mut m: __m128) -> f32 {
-//     unsafe {
-//         m = _mm_min_ps(m, MY_SHUFFLE_4!(m, 2, 3, 0, 0));
-//         m = _mm_min_ps(m, MY_SHUFFLE_4!(m, 1, 0, 0, 0));
-//         _mm_cvtss_f32(m)
-//     }
-// }
