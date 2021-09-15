@@ -31,7 +31,7 @@ impl PackedIdx {
     }
 
     fn joint_get_idx(&self) -> u32 {
-        debug_assert_ne!(self.is_leaf(), true);
+        debug_assert_eq!(self.is_leaf(), false);
         self.value as u32
     }
 
@@ -51,7 +51,7 @@ impl PackedIdx {
 
         let packed_idx = ((!0 >> 9) & idx) as i32;
         let packed_count = (count << 23) as i32;
-    
+
         PackedIdx {
             value: i32::MIN | packed_count | packed_idx
         }
@@ -229,7 +229,7 @@ fn hit_simd(world: &World, start: usize, len: usize, r: Ray, t_min: f32, t_max: 
     let min_t = f32x4::hmin(closest_t);
     if min_t < t_max { 
         let min_t_channel = f32x4::cmp_eq(closest_t, f32x4::splat(min_t));
-        let min_t_mask = u32x4::vmovemaskq_u32(min_t_channel.m);
+        let min_t_mask = u32x4::movemask(min_t_channel);
         if min_t_mask != 0 {
             let mut id_scalar : [i32;4] = [0, 0, 0, 0];
             let mut closest_t_scalar : [f32;4] = [0.0, 0.0, 0.0, 0.0];
@@ -339,11 +339,14 @@ impl QBVH {
             tree: Vec::new()
         }
     }
+    
+    // print name for natvis purposes
+    // println!("{}", std::any::type_name::<PackedIdx>());
 
     fn hit_node(child_idx: usize, hit_any_node: &mut bool, r: Ray, t_min: f32, closest_t: &mut f32, current_node: &QBVHNode, bvh: &QBVH, world: &World, out_hit: &mut HitRecord) {
         let child = &current_node.children[child_idx];
         assert_eq!(child.is_empty_leaf(), false);
-        
+
         if child.is_leaf() {
             let (c_idx, c_count) = child.leaf_get_idx_count();
             if hit(world, c_idx as usize, c_count as usize, r, t_min, *closest_t, out_hit) {

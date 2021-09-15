@@ -22,9 +22,9 @@ extern "C" {
 #[derive(Copy, Clone)]
 pub struct f32x4 { pub m: float32x4_t }
 
-#[allow(non_camel_case_types)]
-#[derive(Copy, Clone)]
-pub struct i32x4 { pub m: int32x4_t }
+// #[allow(non_camel_case_types)]
+// #[derive(Copy, Clone)]
+// pub struct i32x4 { pub m: int32x4_t }
 
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone)]
@@ -171,7 +171,7 @@ impl f32x4 {
         }
     }
 
-    /// Returns a scalar containing the smallest channel in the vector.  
+    /// Returns a scalar containing the smallest channel in the lane.  
     pub fn hmin(v: f32x4) -> f32 {
         unsafe {
             let m1 = vminq_f32(v.m, ffi_swizzle(v.m, 2, 3, 0, 0));
@@ -183,7 +183,7 @@ impl f32x4 {
     pub fn equal(a: f32x4, b: f32x4) -> bool {
         unsafe {
             let eq_mask = vceqq_f32(a.m, b.m);
-            u32x4::vmovemaskq_u32(eq_mask) == 15
+            u32x4::movemask(eq_mask) == 15
         }
     }
 
@@ -251,12 +251,12 @@ impl u32x4 {
         }
     }
 
-    pub fn vmovemaskq_u32(flags: uint32x4_t) -> u32 {
+    pub fn movemask(flags: u32x4) -> u32 {
         unsafe {
             // We want to make a mask that has the four first bits set
             // based on whether the corresponding channel in flags was set.
             let mask_bits = u32x4::set(1, 2, 4, 8);  
-            let msk = vandq_u32(flags, mask_bits.m);
+            let msk = vandq_u32(flags.m, mask_bits.m);
 
             let shf1 = ffi_vextq2_u32(msk, msk); // [2 3 0 1]
             let or1  = vorrq_u32(msk, shf1);     // [0+2 1+3 0+2 1+3]
@@ -268,11 +268,11 @@ impl u32x4 {
     }
 
     pub fn any(&self) -> bool {
-        u32x4::vmovemaskq_u32(self.m) != 0
+        u32x4::movemask(self.m) != 0
     }
 
     pub fn all(&self) -> bool {
-        u32x4::vmovemaskq_u32(self.m) == 15
+        u32x4::movemask(self.m) == 15
     }
 
     pub fn and(a: u32x4, b: u32x4) -> u32x4 {
@@ -312,179 +312,19 @@ impl u32x4 {
 }
 
 #[cfg(test)]
-mod test {
+mod arm_test {
     use super::*;
-
-    #[test]
-    fn test_set_f32() {
-        let v = f32x4::set(15.0, 42.0, -36.0, 1.0);
-        unsafe {
-            let channel_0 : f32 = simd_extract(v.m, 0);
-            let channel_1 : f32 = simd_extract(v.m, 1);
-            let channel_2 : f32 = simd_extract(v.m, 2);
-            let channel_3 : f32 = simd_extract(v.m, 3);
-        
-            assert_eq!(15.0, channel_0);
-            assert_eq!(42.0, channel_1);
-            assert_eq!(-36.0, channel_2);
-            assert_eq!(1.0, channel_3);
-        }
-    }
-
-    #[test]
-    fn test_splat_f32() {
-        let v = f32x4::splat(42.0);
-        unsafe {
-            let channel_0 : f32 = simd_extract(v.m, 0);
-            let channel_1 : f32 = simd_extract(v.m, 1);
-            let channel_2 : f32 = simd_extract(v.m, 2);
-            let channel_3 : f32 = simd_extract(v.m, 3);
-        
-            assert_eq!(42.0, channel_0);
-            assert_eq!(42.0, channel_1);
-            assert_eq!(42.0, channel_2);
-            assert_eq!(42.0, channel_3);
-        }
-    }
-
-    #[test]
-    fn test_vblendq_f32() {
-        let a = f32x4::set(5.0, 3.0, 4.0, 5.0);
-        let b = f32x4::set(1.0, 2.0, 3.0, 6.0);
-
-        let mask = f32x4::cmp_lt(a , b);
-        let blend = f32x4::blendv(a, b, mask);
-
-        unsafe {
-            let channel_0 : f32 = simd_extract(blend.m, 0);
-            let channel_1 : f32 = simd_extract(blend.m, 1);
-            let channel_2 : f32 = simd_extract(blend.m, 2);
-            let channel_3 : f32 = simd_extract(blend.m, 3);
-        
-            assert_eq!(1.0, channel_0);
-            assert_eq!(2.0, channel_1);
-            assert_eq!(3.0, channel_2);
-            assert_eq!(5.0, channel_3);
-        }
-    }
-
-    fn print_fx4(v: float32x4_t) {
-        unsafe {
-            let x : f32 = simd_extract(v, 0);
-            let y : f32 = simd_extract(v, 1);
-            let z : f32 = simd_extract(v, 2);
-            let w : f32 = simd_extract(v, 3);
-    
-            println!("{} {} {} {}", x, y, z, w);
-        }
-    }
-
-    #[test]
-    fn test_equal_f32() {
-        {
-            let a = f32x4::splat(0.0);
-            let b = f32x4::splat(0.0);
-            assert!(f32x4::equal(a, b));
-        }
-
-        {
-            let a = f32x4::set(1.2, 3.42, 0.0, 9.999);
-            let b = f32x4::set(1.2, 3.42, 0.0, 9.999);
-            assert!(f32x4::equal(a, b));
-        }
-
-        {
-            let a = f32x4::set(1.2, 3.42, 0.0, 9.999);
-            let b = f32x4::set(142.2, 3.42, 0.0, 42.223);
-            assert!(f32x4::equal(a, b) == false);
-        }
-    }
 
     #[test]
     fn test_swizzle_f32() {
         let a = f32x4::set(1.0, 2.0, 3.0, 4.0);
         let b = f32x4::set(2.0, 3.0, 1.0, 4.0);
-        print_fx4(a.m);
-        print_fx4(b.m);
+        print_fx4(a);
+        print_fx4(b);
 
         let c = f32x4::swizzle(a, 1, 2, 0, 3);
-        print_fx4(c.m);
+        print_fx4(c);
     
         assert!(f32x4::equal(c, b));
-    }
-
-    #[test]
-    fn test_hmin_f32() {
-        let a = f32x4::set(-4.2, 15.0, 0.0, 3.92);
-        let hmin = f32x4::hmin(a);
-
-        assert_eq!(-4.2, hmin);
-    }
-
-    #[test]
-    fn test_vblendq_i32() {
-        let a = i32x4::set(4, 3, 4, 5);
-        let b = i32x4::set(8, 5, 7, 2);
-
-        let mask = i32x4::cmp_lt(a , b);
-        let blend = i32x4::blendv(a, b, mask);
-
-        unsafe {
-            let channel_0 : i32 = simd_extract(blend.m, 0);
-            let channel_1 : i32 = simd_extract(blend.m, 1);
-            let channel_2 : i32 = simd_extract(blend.m, 2);
-            let channel_3 : i32 = simd_extract(blend.m, 3);
-        
-            assert_eq!(4, channel_0);
-            assert_eq!(3, channel_1);
-            assert_eq!(4, channel_2);
-            assert_eq!(2, channel_3);
-        }
-    }
-
-    fn print_ux4(v: uint32x4_t) {
-        unsafe {
-            let x : u32 = simd_extract(v, 0);
-            let y : u32 = simd_extract(v, 1);
-            let z : u32 = simd_extract(v, 2);
-            let w : u32 = simd_extract(v, 3);
-    
-            println!("{} {} {} {}", x, y, z, w);
-        }
-    }
-
-    #[test]
-    fn test_any_u32() {
-        {
-            println!("Test 1");
-            let a = f32x4::splat(0.0);
-            let mask = f32x4::cmp_gt(a, a);
-            print_ux4(mask.m);
-            assert_eq!(mask.any(), false);
-        }
-        {
-            println!("Test 2");
-            let a = f32x4::splat(5.0);
-            let b = f32x4::splat(5.0);
-            let mask = f32x4::cmp_eq(a, b);
-            print_ux4(mask.m);
-            assert_eq!(mask.any(), true);
-        }
-        {
-            println!("Test 3");
-            let a = f32x4::set(5.0, 3.0, 4.0, 5.0);
-            let b = f32x4::set(1.0, 2.0, 3.0, 4.0);
-            let mask = f32x4::cmp_lt(a , b);
-            print_ux4(mask.m);
-            assert_eq!(mask.any(), false);
-        }
-        {
-            println!("Test 4");
-            let a = f32x4::set(5.0, 3.0, 4.0, 5.0);
-            let b = f32x4::set(1.0, 2.0, 3.0, 6.0);
-            let mask = f32x4::cmp_lt(a , b);
-            print_ux4(mask.m);
-            assert_eq!(mask.any(), true);
-        }
     }
 }

@@ -49,7 +49,8 @@
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],
-            "externalConsole": false
+            "visualizerFile": "${workspaceFolder}/src/tracer.natvis",
+            "showDisplayString": true
         },
         {
             "name": "win32 release",
@@ -60,7 +61,8 @@
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],
-            "externalConsole": false
+            "visualizerFile": "${workspaceFolder}/src/tracer.natvis",
+            "showDisplayString": true
         }
     ]
 }

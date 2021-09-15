@@ -1,6 +1,5 @@
 //! math.rs: Provides functionality for solving linear algebra problems. 
 
-use random_fast_rng::*;
 use std::cell::RefCell;
 use rand::{Rng,SeedableRng};
 use rand::rngs::StdRng;

@@ -10,14 +10,12 @@ pub mod collide;
 pub mod world;
 
 use math::*;
-use simd::*;
 use collide::*;
 use spatial::*;
 use world::*;
 use std::time::Instant;
 
 extern crate image;
-extern crate random_fast_rng;
 
 pub struct Camera {
     eye_origin: Vec3,
@@ -64,12 +62,6 @@ impl Camera {
         )
     }
 }
-
-// unsafe fn hmax(mut m: __m128) -> f32 {
-//     m = _mm_max_ps(m, MY_SHUFFLE_4!(m, 2, 3, 0, 0));
-//     m = _mm_max_ps(m, MY_SHUFFLE_4!(m, 1, 0, 0, 0));
-//     _mm_cvtss_f32(m)
-// }
 
 fn sample_color(r: Ray, hit_tree: & dyn Hitable, world: &World, materials: &[Material], bounces: i32) -> Vec3 {
     let mut hit = HitRecord::new();
@@ -274,7 +266,14 @@ impl RGBImage {
     }
 }
 
+// TODO: port simd code to x86
+// TODO: progressive rendering
+// TODO: if we make it progressive, we can also make it interactive, but it needs to be a lot faster for that
+// TODO: dont depend on the img crate, it is really heavy. Throw out some live preview instead.
+
 fn main() {
+    println!("Begin setup");
+    
     let aspect_ratio = 3.0 / 2.0;
     let origin = vec3![13.0, 2.0, 3.0];
     let look_at = vec3![0.0, 0.0, 0.0];
