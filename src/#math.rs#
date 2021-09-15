@@ -62,13 +62,9 @@ pub struct Vec3 {
 
 impl Vec3 {
     pub fn zero() -> Vec3 {
-        Vec3 { x: 0.0, y: 0.0, z: 0.0 }
+        Vec3{ x: 0.0, y: 0.0, z: 0.0}
     }
 
-    pub fn new(x: f32, y: f32, z: f32) -> Vec3 {
-        Vec3 { x, y, z }
-    }
-    
     pub fn is_near_zero(&self) -> bool {
         let eps = 1.0e-8;
         (self.x.abs() < eps) && (self.y.abs() < eps) && (self.z.abs() < eps) 
@@ -219,7 +215,7 @@ pub fn refract(v: Vec3, n: Vec3, ni_over_nt: f32) -> Vec3 {
     r_out_perp + r_out_para
 }
 
-/// Returns a random point within a unit-radius sphere.
+/// Returns a random point within a unit-radius.
 pub fn rand_in_unit_sphere() -> Vec3 {
     loop {
         let p = vec3![rand_in_range(-1.0, 1.0), rand_in_range(-1.0, 1.0), rand_in_range(-1.0, 1.0)];

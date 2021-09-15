@@ -31,7 +31,7 @@ impl PackedIdx {
     }
 
     fn joint_get_idx(&self) -> u32 {
-        debug_assert_eq!(self.is_leaf(), false);
+        debug_assert!(!self.is_leaf());
         self.value as u32
     }
 
@@ -168,8 +168,7 @@ fn hit_simd(world: &World, start: usize, len: usize, r: Ray, t_min: f32, t_max: 
     let rd_x = f32x4::splat(r.direction.x);
     let rd_y = f32x4::splat(r.direction.y);
     let rd_z = f32x4::splat(r.direction.z);
-    let r_t  = f32x4::splat(r.time);
-
+    
     let t_min4 = f32x4::splat(t_min);
     let zero_4 = f32x4::splat(0.0);
 
@@ -180,18 +179,10 @@ fn hit_simd(world: &World, start: usize, len: usize, r: Ray, t_min: f32, t_max: 
     let mut cur_id = i32x4::set(first_idx, first_idx + 1, first_idx + 2, first_idx + 3);
 
     let end = start + len - (len % SIMD_WIDTH);
-    for i in (start..end).step_by(SIMD_WIDTH) {
-        let vel_x =  f32x4::loadu(&world.animations.velocity_x[i..i+4]);
-        let vel_y =  f32x4::loadu(&world.animations.velocity_y[i..i+4]);
-        let vel_z =  f32x4::loadu(&world.animations.velocity_z[i..i+4]);
-        let time_0 = f32x4::loadu(&world.animations.start_time[i..i+4]);
-        let time_1 = f32x4::loadu(&world.animations.end_time[i..i+4]);
-
-        let time_t = f32x4::div(f32x4::sub(r_t, time_0), f32x4::sub(time_1, time_0));
-    
-        let sc_x = f32x4::add(f32x4::loadu(&world.sphere_x[i..i+4]), f32x4::mul(vel_x, time_t));
-        let sc_y = f32x4::add(f32x4::loadu(&world.sphere_y[i..i+4]), f32x4::mul(vel_y, time_t));
-        let sc_z = f32x4::add(f32x4::loadu(&world.sphere_z[i..i+4]), f32x4::mul(vel_z, time_t));
+    for i in (start..end).step_by(SIMD_WIDTH) {    
+        let sc_x = f32x4::loadu(&world.sphere_x[i..i+4]);
+        let sc_y = f32x4::loadu(&world.sphere_y[i..i+4]);
+        let sc_z = f32x4::loadu(&world.sphere_z[i..i+4]);
 
         let _radius =  f32x4::loadu(&world.sphere_r[i..i+4]);
         let sq_radius = f32x4::mul(_radius, _radius);
@@ -251,7 +242,7 @@ fn hit_simd(world: &World, start: usize, len: usize, r: Ray, t_min: f32, t_max: 
             let final_t = closest_t_scalar[lane as usize];
 
             out_hit.point = r.at(final_t);
-            out_hit.normal = (out_hit.point - world.sphere_center(hit_id, r.time)) / world.sphere_r[hit_id];
+            out_hit.normal = (out_hit.point - world.sphere_c[hit_id]) / world.sphere_r[hit_id];
             out_hit.set_face_and_normal(r, out_hit.normal);
             out_hit.t = final_t;
             out_hit.obj_id = hit_id as usize;
@@ -268,7 +259,7 @@ fn hit(world: &World, start: usize, len: usize, ray: Ray, t_min: f32, t_max: f32
 
     let end = start + len;
     for i in start..end {
-        let center = world.sphere_center(i, ray.time);
+        let center = world.sphere_c[i];
         let radius = world.sphere_r[i];
 
         let oc = ray.origin - center;
@@ -294,7 +285,7 @@ fn hit(world: &World, start: usize, len: usize, ray: Ray, t_min: f32, t_max: f32
     }
     
     if hit_id != -1 {
-        let center = world.sphere_center(hit_id as usize, ray.time);
+        let center = world.sphere_c[hit_id as usize];
         let radius = world.sphere_r[hit_id as usize];
 
         out_hit.t = closest_t;
@@ -339,13 +330,13 @@ impl QBVH {
             tree: Vec::new()
         }
     }
-    
+
     // print name for natvis purposes
     // println!("{}", std::any::type_name::<PackedIdx>());
 
     fn hit_node(child_idx: usize, hit_any_node: &mut bool, r: Ray, t_min: f32, closest_t: &mut f32, current_node: &QBVHNode, bvh: &QBVH, world: &World, out_hit: &mut HitRecord) {
         let child = &current_node.children[child_idx];
-        assert_eq!(child.is_empty_leaf(), false);
+        assert!(!child.is_empty_leaf());
 
         if child.is_leaf() {
             let (c_idx, c_count) = child.leaf_get_idx_count();
@@ -386,7 +377,7 @@ impl QBVH {
             QBVH::hit_node(3, &mut hit_any_node, r, t_min, &mut closest_t, current_node, bvh, world, out_hit);            
         }
 
-        return hit_any_node;
+        hit_any_node
     }
 
     fn hit_node_children(node: &QBVHNode, r: Ray, t_min: f32, t_max: f32) -> ([bool;4], bool) {
@@ -467,10 +458,10 @@ impl Hitable for QBVH {
     }
 }
 
-fn pick_split_axis(objects: &mut [Sphere], start: usize, end: usize, t0: f32, t1: f32) -> (Axis, f32) {
-    let mut bounds = objects[start].calc_aabb(t0, t1);
+fn pick_split_axis(objects: &mut [Sphere], start: usize, end: usize) -> (Axis, f32) {
+    let mut bounds = objects[start].calc_aabb();
     for i in start+1..end {
-        bounds = AABB::merge(&bounds, &objects[i].calc_aabb(t0, t1))
+        bounds = AABB::merge(&bounds, &objects[i].calc_aabb())
     }
 
     let split_axis = bounds.longest_axis();
@@ -479,10 +470,10 @@ fn pick_split_axis(objects: &mut [Sphere], start: usize, end: usize, t0: f32, t1
     (split_axis, split_point)
 }
 
-fn partition(objects: &mut [Sphere], axis: Axis, position: f32, start: usize, end: usize, t0: f32, t1: f32) -> usize {
+fn partition(objects: &mut [Sphere], axis: Axis, position: f32, start: usize, end: usize) -> usize {
     let mut split_idx = start;
     for i in start..end {
-        let bounds = objects[i].calc_aabb(t0, t1);
+        let bounds = objects[i].calc_aabb();
         let center = bounds.get_center();
         if center.at(axis as usize) <= position {
             objects.swap(i, split_idx);
@@ -517,12 +508,12 @@ impl QBVH {
         new_node_idx as i32
     }
 
-    pub fn build(&mut self, objects: &mut[Sphere], start: usize, end: usize, parent: i32, child: i32, depth: u32, t0: f32, t1: f32,) {
+    pub fn build(&mut self, objects: &mut[Sphere], start: usize, end: usize, parent: i32, child: i32, depth: u32) {
         let max_elem_in_leaf = 16;
     
-        let mut bounds = objects[start].calc_aabb(t0, t1);
+        let mut bounds = objects[start].calc_aabb();
         for i in start+1..end {
-            bounds = AABB::merge(&bounds, &objects[i].calc_aabb(t0, t1));
+            bounds = AABB::merge(&bounds, &objects[i].calc_aabb());
         }
     
         if (end - start) <= max_elem_in_leaf {
@@ -530,8 +521,8 @@ impl QBVH {
             return;
         }
             
-        let (split_axis, split_point) = pick_split_axis(objects, start, end, t0, t1);
-        let split_idx = partition(objects, split_axis, split_point, start, end, t0, t1);
+        let (split_axis, split_point) = pick_split_axis(objects, start, end);
+        let split_idx = partition(objects, split_axis, split_point, start, end);
     
         let current; let left; let right;
         if depth % 2 == 1 {
@@ -545,7 +536,7 @@ impl QBVH {
             right = 2;
         }
     
-        self.build(objects, start, split_idx, current as i32, left, depth + 1, t0, t1);
-        self.build(objects, split_idx, end, current as i32, right, depth + 1, t0, t1);
+        self.build(objects, start, split_idx, current as i32, left, depth + 1);
+        self.build(objects, split_idx, end, current as i32, right, depth + 1);
     }
 }

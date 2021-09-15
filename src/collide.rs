@@ -8,12 +8,11 @@ pub enum Axis { X, Y, Z }
 pub struct Ray {
     pub origin: Vec3,
     pub direction: Vec3,
-    pub time: f32
 }
 
 impl Ray {
-    pub fn new(origin: Vec3, direction: Vec3, time: f32) -> Ray {
-        Ray { origin, direction, time }
+    pub fn new(origin: Vec3, direction: Vec3) -> Ray {
+        Ray { origin, direction }
     }
 
     pub fn at(&self, t: f32) -> Vec3 {
@@ -47,24 +46,16 @@ pub struct AABB {
 }
 
 impl AABB {
-    fn new() -> AABB {
-        AABB { min: Vec3::zero(), max: Vec3::zero() }
-    }
-
-    fn is_empty(&self) -> bool {
-        length_sq(self.min) == 0.0 && length_sq(self.max) == 0.0
-    }
-
     pub fn longest_axis(&self) -> Axis {
         let d =  self.max - self.min;
         if (d.x > d.y) && (d.x > d.z) {
-            return Axis::X;
+            Axis::X
         }
         else if d.y > d.z {
-            return Axis::Y;
+            Axis::Y
         }
         else {
-            return Axis::Z;
+            Axis::Z
         }
     }
 
@@ -132,31 +123,15 @@ impl AABB {
 pub struct Sphere {
     pub center: Vec3,
     pub velocity: Vec3,
-    pub start_time: f32,
-    pub end_time: f32,
     pub radius: f32,
     pub material_id: u32
 }
 
 impl Sphere {
-    pub fn calc_aabb(&self, time0: f32, time1: f32) -> AABB {
-        let c0 = self.get_center(time0);
-        let c1 = self.get_center(time1);
-        
-        let bb0 = AABB {
-            min: c0 - self.radius,
-            max: c0 - self.radius,
-        };
-
-        let bb1 = AABB {
-            min: c1 - self.radius,
-            max: c1 + self.radius,
-        };
-
-        AABB::merge(&bb0, &bb1)
-    }
-
-    pub fn get_center(&self, time: f32) -> Vec3 {
-        self.center + ((time - self.start_time) / (self.end_time - self.start_time)) * self.velocity  
+    pub fn calc_aabb(&self) -> AABB {
+        AABB {
+            min: self.center - self.radius,
+            max: self.center + self.radius,
+        }
     }
 }

@@ -51,14 +51,13 @@ impl Camera {
         }
     }
 
-    pub fn get_ray(&self, s: f32, t: f32, time0: f32, time1: f32) -> Ray {
+    pub fn get_ray(&self, s: f32, t: f32) -> Ray {
         let rd = self.lens_radius * rand_in_unit_disk();
         let offset = self.u * rd.x + self.v * rd.y;
 
         Ray::new(
             self.eye_origin + offset, 
-            self.lower_left + s * self.x_extent + t * self.y_extent - self.eye_origin - offset,
-            rand_in_range(time0, time1)
+            self.lower_left + s * self.x_extent + t * self.y_extent - self.eye_origin - offset
         )
     }
 }
@@ -111,7 +110,7 @@ impl Scattering for Lambert {
             scatter_dir = hit.normal;
         }
 
-        let scattered = Ray::new(hit.point, scatter_dir, r.time);
+        let scattered = Ray::new(hit.point, scatter_dir);
         let attenuation = self.albedo;
         (true, attenuation, scattered)
     }
@@ -131,7 +130,7 @@ impl Metal {
 impl Scattering for Metal {
     fn scatter(&self, r: &Ray, hit: &HitRecord,) -> (bool, Vec3, Ray) {
         let reflected = reflect(normalized(r.direction), hit.normal);
-        let scattered = Ray::new(hit.point, reflected + self.roughness * rand_in_unit_sphere(), r.time);
+        let scattered = Ray::new(hit.point, reflected + self.roughness * rand_in_unit_sphere());
         let attenuation = self.albedo;
         let did_bounce = dot(scattered.direction, hit.normal) > 0.0;
         (did_bounce, attenuation, scattered)
@@ -163,7 +162,7 @@ impl Scattering for Dielectric {
             false => refract(unit_dir, hit.normal, refraction_ratio)
         };
 
-        (true, vec3![1.0], Ray::new(hit.point, direction, r.time))
+        (true, vec3![1.0], Ray::new(hit.point, direction))
     }
 }
 
@@ -187,20 +186,7 @@ fn push_sphere(objects: &mut Vec<Sphere>, center: Vec3, radius: f32, mat: usize)
     objects.push(Sphere {
         center, radius, 
         material_id: mat as u32,
-        velocity: Vec3::zero(),
-        start_time: 0.0,
-        end_time: 1.0
-    });
-}
-
-fn push_moving_sphere(objects: &mut Vec<Sphere>, center: Vec3, radius: f32, mat: usize, 
-    vel: Vec3, start_time: f32, end_time: f32) {
-    objects.push(Sphere {
-        center, radius, 
-        material_id: mat as u32,
-        velocity: vel,
-        start_time,
-        end_time
+        velocity: Vec3::zero()
     });
 }
 
@@ -219,9 +205,8 @@ fn generate_world_data(objects: &mut Vec<Sphere>, materials: &mut Vec<Material>)
             if length(center - vec3![4.0, 0.2, 0.0]) > 0.9 {
                 if material_select < 0.8 {
                     let albedo = Vec3::random() * Vec3::random();
-                    let velocity = vec3![0.0, rand_in_range(0.0, 0.5), 0.0];
                     materials.push(Material::Lambert(Lambert{ albedo }));
-                    push_moving_sphere(objects, center, 0.2, materials.len() - 1, velocity, 0.0, 1.0);
+                    push_sphere(objects, center, 0.2, materials.len() - 1);
                 } 
                 else if material_select < 0.96 {
                     let albedo = Vec3::random_range(0.5, 1.0);
@@ -266,7 +251,6 @@ impl RGBImage {
     }
 }
 
-// TODO: port simd code to x86
 // TODO: progressive rendering
 // TODO: if we make it progressive, we can also make it interactive, but it needs to be a lot faster for that
 // TODO: dont depend on the img crate, it is really heavy. Throw out some live preview instead.
@@ -292,13 +276,10 @@ fn main() {
     let mut objects = Vec::new();
     let mut materials = Vec::new();
     generate_world_data(&mut objects, &mut materials);
-    
-    let start_t = 0.0;
-    let end_t = 0.0;
-
+ 
     let mut bvh = QBVH::new();
     let obj_count = objects.len();
-    bvh.build(&mut objects, 0, obj_count, -1, 0, 0, start_t, end_t);
+    bvh.build(&mut objects, 0, obj_count, -1, 0, 0);
 
     let world = World::construct(&objects);
 
@@ -314,7 +295,7 @@ fn main() {
                 let (u_s, v_s) : (f32, f32) = (rand_f32(), rand_f32());
                 let u = (col as f32 + u_s) / image.width as f32;
                 let v = 1.0 - ((row as f32 + v_s) / image.height as f32); // Invert y to align with output from the book.
-                let r = cam.get_ray(u, v, start_t, end_t);
+                let r = cam.get_ray(u, v);
                 color += sample_color(r, &bvh, &world, &materials, 50);
             }
             
