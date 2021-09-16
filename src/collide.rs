@@ -71,11 +71,11 @@ impl AABB {
         (self.min + self.max) * 0.5
     }
 
-    pub fn min_axis(&self, axis: Axis) -> f32 {
+    pub fn min_at_axis(&self, axis: Axis) -> f32 {
         self.at_axis(&self.min, axis)
     }
 
-    pub fn max_axis(&self, axis: Axis) -> f32 {
+    pub fn max_at_axis(&self, axis: Axis) -> f32 {
         self.at_axis(&self.max, axis)
     }
 

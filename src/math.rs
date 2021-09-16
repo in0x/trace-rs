@@ -14,12 +14,10 @@ fn _seedable_rand() -> f32 {
 }
 
 pub fn rand_f32() -> f32 {
-    // random_fast_rng::local_rng().gen()
     _seedable_rand()
 }
 
 pub fn rand_int() -> u32 {
-    // random_fast_rng::local_rng().gen()
     _seedable_rand() as u32
 }
 
@@ -220,11 +218,21 @@ pub fn refract(v: Vec3, n: Vec3, ni_over_nt: f32) -> Vec3 {
 }
 
 /// Returns a random point within a unit-radius sphere.
+// pub fn rand_in_unit_sphere() -> Vec3 {
+//     loop {
+//         let p = vec3![rand_in_range(-1.0, 1.0), rand_in_range(-1.0, 1.0), rand_in_range(-1.0, 1.0)];
+//         if length_sq(p) < 1.0 { return p };
+//     }
+// }
+
+// http://corysimon.github.io/articles/uniformdistn-on-sphere/
 pub fn rand_in_unit_sphere() -> Vec3 {
-    loop {
-        let p = vec3![rand_in_range(-1.0, 1.0), rand_in_range(-1.0, 1.0), rand_in_range(-1.0, 1.0)];
-        if length_sq(p) < 1.0 { return p };
-    }
+    let theta = std::f32::consts::TAU * rand_in_range(0.0, 1.0);
+    let phi = f32::acos(1.0 - 2.0 * rand_in_range(0.0, 1.0));
+
+    vec3![f32::sin(phi) * f32::cos(theta),
+          f32::sin(phi) * f32::sin(theta),
+          f32::cos(phi)]
 }
 
 pub fn rand_unit_vector() -> Vec3 {

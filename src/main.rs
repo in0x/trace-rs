@@ -282,7 +282,7 @@ fn main() {
     bvh.build(&mut objects, 0, obj_count, -1, 0, 0);
 
     let world = World::construct(&objects);
-
+    println!("#objects {}", objects.len());
     println!("Finished setup. Begin rendering...");
     let measure_start = Instant::now();
 
@@ -311,7 +311,7 @@ fn main() {
     let measure_end = Instant::now();
     let render_duration = measure_end - measure_start;
 
-    println!("Finished rendering. Time elapsed: {} seconds.", render_duration.as_secs());
+    println!("Finished rendering. Time elapsed: {} ms.", render_duration.as_millis());
     println!("Saving result to out.png");
 
     let save_result = image::save_buffer("out.png", &image.buffer, image.width as u32, image.height as u32, image::ColorType::Rgb8);

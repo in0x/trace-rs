@@ -13,24 +13,17 @@ pub struct World {
 }
 
 impl World {
-    fn push_moving_sphere(&mut self, center: Vec3, radius: f32, material_id: u32) {
-        self.sphere_x.push(center.x);
-        self.sphere_y.push(center.y);
-        self.sphere_z.push(center.z);
-        self.sphere_r.push(radius);
-        self.sphere_c.push(center);
-        self.material_ids.push(material_id);
-    }
-
     pub fn construct(objects: &[Sphere]) -> World {
         let mut world = World::default();
         for sphere in objects {
-            world.push_moving_sphere(
-                sphere.center,
-                sphere.radius,
-                sphere.material_id
-            );
+            world.sphere_x.push(sphere.center.x);
+            world.sphere_y.push(sphere.center.y);
+            world.sphere_z.push(sphere.center.z);
+            world.sphere_r.push(sphere.radius);
+            world.sphere_c.push(sphere.center);
+            world.material_ids.push(sphere.material_id);
         }
+        
         world
     }
 }

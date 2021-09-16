@@ -300,39 +300,14 @@ fn hit(world: &World, start: usize, len: usize, ray: Ray, t_min: f32, t_max: f32
     }
 }   
 
-fn hit_spheres(world: &World, start: usize, len: usize, ray: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
-    let mut found_hit = false;
-    let mut closest_t = t_max;
-
-    if len >= SIMD_WIDTH {
-        if hit_simd(world, start, len, ray, t_min, closest_t, out_hit) {
-            found_hit = true;
-            closest_t = out_hit.t;
-        }
-        
-        let end = start + len;
-        found_hit |= hit(world, end - (len % SIMD_WIDTH), len % SIMD_WIDTH, ray, t_min, closest_t, out_hit);
-    }
-    else {
-        found_hit = hit(world, start, len, ray, t_min, closest_t, out_hit);
-    }
-    
-    found_hit
-}
-
 pub struct QBVH {
     tree: Vec<QBVHNode>
 }
 
 impl QBVH {
     pub fn new() -> QBVH {
-        QBVH {
-            tree: Vec::new()
-        }
+        QBVH { tree: Vec::new() }
     }
-
-    // print name for natvis purposes
-    // println!("{}", std::any::type_name::<PackedIdx>());
 
     fn hit_node(child_idx: usize, hit_any_node: &mut bool, r: Ray, t_min: f32, closest_t: &mut f32, current_node: &QBVHNode, bvh: &QBVH, world: &World, out_hit: &mut HitRecord) {
         let child = &current_node.children[child_idx];
@@ -341,7 +316,6 @@ impl QBVH {
         if child.is_leaf() {
             let (c_idx, c_count) = child.leaf_get_idx_count();
             if hit(world, c_idx as usize, c_count as usize, r, t_min, *closest_t, out_hit) {
-            // if hit_spheres(world, c_idx as usize, c_count as usize, r, t_min, *closest_t, out_hit) {
                 *hit_any_node = true;
                 *closest_t = out_hit.t;
             }
@@ -465,7 +439,7 @@ fn pick_split_axis(objects: &mut [Sphere], start: usize, end: usize) -> (Axis, f
     }
 
     let split_axis = bounds.longest_axis();
-    let split_point = (bounds.max_axis(split_axis) + bounds.min_axis(split_axis)) * 0.5;
+    let split_point = (bounds.max_at_axis(split_axis) + bounds.min_at_axis(split_axis)) * 0.5;
 
     (split_axis, split_point)
 }
@@ -492,7 +466,6 @@ impl QBVH {
         }
 
         self.tree[parent as usize].set_bounds(child as usize, bounds);
-        // self.tree[parent as usize].set_child_leaf_node(child as usize, (end - start + 3) / 4, start);
         self.tree[parent as usize].set_child_leaf_node(child as usize, end - start, start);
     }
 
@@ -517,13 +490,29 @@ impl QBVH {
         }
     
         if (end - start) <= max_elem_in_leaf {
-            self.create_leaf_node(start, end, parent, child, &bounds);
+            let group_width = end - start;
+            let aligned_width = ((group_width + (SIMD_WIDTH - 1)) / SIMD_WIDTH) * SIMD_WIDTH;
+
+            let (aligned_start, aligned_end) = {
+                let misalignment = aligned_width - group_width; 
+                if  misalignment > 0 {
+                    if (end + misalignment) < objects.len() {
+                        (start, end + misalignment) 
+                    } else {
+                        (start - misalignment, end)
+                    }
+                } else {
+                    (start, end)
+                }
+            };
+            
+            self.create_leaf_node(aligned_start, aligned_end, parent, child, &bounds);
             return;
         }
             
         let (split_axis, split_point) = pick_split_axis(objects, start, end);
         let split_idx = partition(objects, split_axis, split_point, start, end);
-    
+
         let current; let left; let right;
         if depth % 2 == 1 {
             current = parent;
