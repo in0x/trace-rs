@@ -7,6 +7,7 @@ pub trait Hitable {
     fn hit(&self, ray: Ray, t_min: f32, t_max: f32, world: &World, out_hit: &mut HitRecord) -> bool;
 }
 
+#[derive(Copy, Clone, Default)]
 struct PackedIdx {
     value: i32
 }
@@ -312,52 +313,6 @@ impl QBVH {
         QBVH { tree: Vec::new() }
     }
 
-    fn hit_node(child_idx: usize, hit_any_node: &mut bool, r: Ray, t_min: f32, closest_t: &mut f32, current_node: &QBVHNode, bvh: &QBVH, world: &World, out_hit: &mut HitRecord) {
-        let child = &current_node.children[child_idx];
-        assert!(!child.is_empty_leaf());
-  
-        if child.is_leaf() {
-            let (c_idx, c_count) = child.leaf_get_idx_count();
-            // if hit(world, c_idx as usize, c_count as usize, r, t_min, *closest_t, out_hit) {
-            if hit_simd(world, c_idx as usize, c_count as usize, r, t_min, *closest_t, out_hit) {
-                *hit_any_node = true;
-                *closest_t = out_hit.t;
-            }
-        }
-        else {
-            let child_node = &bvh.tree[child.joint_get_idx() as usize];
-            if QBVH::hit_world(r, t_min, *closest_t, child_node, bvh, world, out_hit) {
-                *hit_any_node = true;
-                *closest_t = out_hit.t;
-            }
-        }
-    }
-
-    fn hit_world(r: Ray, t_min: f32, t_max: f32, current_node: &QBVHNode, bvh: &QBVH, world: &World, out_hit: &mut HitRecord) -> bool {        
-        let (hit_mask, any_hit) = QBVH::hit_node_children(current_node, r, t_min, t_max);
-        if !any_hit {
-            return false;
-        }
-
-        let mut hit_any_node = false;
-        let mut closest_t = t_max;
-
-        if hit_mask[0] {
-            QBVH::hit_node(0, &mut hit_any_node, r, t_min, &mut closest_t, current_node, bvh, world, out_hit);            
-        }
-        if hit_mask[1] {
-            QBVH::hit_node(1, &mut hit_any_node, r, t_min, &mut closest_t, current_node, bvh, world, out_hit);            
-        }
-        if hit_mask[2] {
-            QBVH::hit_node(2, &mut hit_any_node, r, t_min, &mut closest_t, current_node, bvh, world, out_hit);            
-        }
-        if hit_mask[3] {
-            QBVH::hit_node(3, &mut hit_any_node, r, t_min, &mut closest_t, current_node, bvh, world, out_hit);            
-        }
-
-        hit_any_node
-    }
-
     fn hit_node_children(node: &QBVHNode, r: Ray, t_min: f32, t_max: f32) -> ([bool;4], bool) {
         let min_x = f32x4::loadu(&node.bb_min_x);
         let min_y = f32x4::loadu(&node.bb_min_y);
@@ -428,11 +383,43 @@ impl QBVH {
 
         (u32x4::get_flags(any_miss), any_miss.any())
     }
+    
+    pub fn hit_qbvh(bvh: &QBVH, r: Ray, t_min: f32, t_max: f32, world: &World, out_hit: &mut HitRecord) -> bool {
+        let mut nodes_to_check : Vec<PackedIdx> = Vec::new();
+        nodes_to_check.reserve(32);
+        nodes_to_check.push(PackedIdx::new_joint(0));
+
+        let mut hit_any_node = false;
+        let mut closest_t = t_max;
+        
+        while nodes_to_check.len() > 0 {
+            let next_node = nodes_to_check.pop().unwrap();
+            
+            if next_node.is_leaf() {
+                let (c_idx, c_count) = next_node.leaf_get_idx_count();
+                if hit_simd(world, c_idx as usize, c_count as usize, r, t_min, closest_t, out_hit) {
+                    hit_any_node = true;
+                    closest_t = out_hit.t;
+                }
+            } else {
+                let bvh_node = &bvh.tree[next_node.joint_get_idx() as usize];
+                let (hit_mask, any_hit) = QBVH::hit_node_children(bvh_node, r, t_min, t_max);
+                if any_hit {
+                    if hit_mask[0] { nodes_to_check.push(bvh_node.children[0]) }; 
+                    if hit_mask[1] { nodes_to_check.push(bvh_node.children[1]) };
+                    if hit_mask[2] { nodes_to_check.push(bvh_node.children[2]) };
+                    if hit_mask[3] { nodes_to_check.push(bvh_node.children[3]) };
+                }
+            }
+        }
+
+        hit_any_node
+    }
 }
 
 impl Hitable for QBVH {
     fn hit(&self, ray: Ray, t_min: f32, t_max: f32, world: &World, out_hit: &mut HitRecord) -> bool {
-        return QBVH::hit_world(ray, t_min, t_max, &self.tree[0], &self, world, out_hit);
+        QBVH::hit_qbvh(&self, ray, t_min, t_max, world, out_hit)
     }
 }
 
