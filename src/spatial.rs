@@ -8,7 +8,7 @@ pub trait Hitable {
 }
 
 #[derive(Copy, Clone, Default)]
-struct PackedIdx {
+pub struct PackedIdx {
     value: i32
 }
 
@@ -384,9 +384,8 @@ impl QBVH {
         (u32x4::get_flags(any_miss), any_miss.any())
     }
     
-    pub fn hit_qbvh(bvh: &QBVH, r: Ray, t_min: f32, t_max: f32, world: &World, out_hit: &mut HitRecord) -> bool {
-        let mut nodes_to_check : Vec<PackedIdx> = Vec::new();
-        nodes_to_check.reserve(32);
+    pub fn hit_qbvh(bvh: &QBVH, r: Ray, t_min: f32, t_max: f32, world: &World, nodes_to_check: &mut Vec<PackedIdx>, out_hit: &mut HitRecord) -> bool {
+        nodes_to_check.clear();
         nodes_to_check.push(PackedIdx::new_joint(0));
 
         let mut hit_any_node = false;
@@ -414,12 +413,6 @@ impl QBVH {
         }
 
         hit_any_node
-    }
-}
-
-impl Hitable for QBVH {
-    fn hit(&self, ray: Ray, t_min: f32, t_max: f32, world: &World, out_hit: &mut HitRecord) -> bool {
-        QBVH::hit_qbvh(&self, ray, t_min, t_max, world, out_hit)
     }
 }
 

@@ -62,14 +62,14 @@ impl Camera {
     }
 }
 
-fn sample_color(r: Ray, hit_tree: & dyn Hitable, world: &World, materials: &[Material], bounces: i32) -> Vec3 {
+fn sample_color(r: Ray, hit_scratch: &mut Vec<spatial::PackedIdx>, bvh: &QBVH, world: &World, materials: &[Material], bounces: i32) -> Vec3 {
     let mut hit = HitRecord::new();
     
     let mut color = vec3![1.0, 1.0, 1.0];
     let mut current_ray = r;
 
     for _bounce in 0..bounces {
-        if hit_tree.hit(current_ray, 0.001, f32::MAX, world, &mut hit) {
+        if QBVH::hit_qbvh(bvh, current_ray, 0.001, f32::MAX, world, hit_scratch, &mut hit) {
             hit.normal = normalized(hit.normal); // The book makes a point about unit length normals but then doesnt enforce it.
             let mat_id = world.material_ids[hit.obj_id] as usize;
             let (did_bounce, attenuation, scattered) = materials[mat_id].scatter(&current_ray, &hit);
@@ -295,6 +295,8 @@ fn main() {
 
     let sample_count = 8;
 
+    let mut hit_scratch: Vec<spatial::PackedIdx> = Vec::new();
+    
     for row in 0..image.height {
         for col in 0..image.width {
             let mut color = vec3![0.0, 0.0, 0.0];
@@ -303,7 +305,7 @@ fn main() {
                 let u = (col as f32 + u_s) / image.width as f32;
                 let v = 1.0 - ((row as f32 + v_s) / image.height as f32); // Invert y to align with output from the book.
                 let r = cam.get_ray(u, v);
-                color += sample_color(r, &bvh, &world, &materials, 50);
+                color += sample_color(r, &mut hit_scratch, &bvh, &world, &materials, 50);
             }
             
             color *= 1.0 / sample_count as f32; // Average over samples            
