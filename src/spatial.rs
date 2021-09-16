@@ -14,12 +14,12 @@ struct PackedIdx {
 /// A QBVHNode has up to four children that it stores the bounds of.
 /// This allows fast intersection testing by testing all 4 at once through SIMD.
 struct QBVHNode {
-    bb_min_x: [f32; 4],
-    bb_min_y: [f32; 4],
-    bb_min_z: [f32; 4],
-    bb_max_x: [f32; 4],
-    bb_max_y: [f32; 4],
-    bb_max_z: [f32; 4],
+    bb_min_x: [f32;4],
+    bb_min_y: [f32;4],
+    bb_min_z: [f32;4],
+    bb_max_x: [f32;4],
+    bb_max_y: [f32;4],
+    bb_max_z: [f32;4],
     children: [PackedIdx; 4],
 }
 
@@ -162,6 +162,8 @@ impl QBVHNode {
 pub const SIMD_WIDTH: usize = 4;
 
 fn hit_simd(world: &World, start: usize, len: usize, r: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
+    assert!((len % SIMD_WIDTH) == 0);
+    
     let ro_x = f32x4::splat(r.origin.x);
     let ro_y = f32x4::splat(r.origin.y);
     let ro_z = f32x4::splat(r.origin.z);
@@ -209,7 +211,8 @@ fn hit_simd(world: &World, start: usize, len: usize, r: Ray, t_min: f32, t_max: 
             let mask = u32x4::and(u32x4::and(discr_gt_0, f32x4::cmp_gt(best_t, t_min4)), f32x4::cmp_lt(best_t, closest_t));
             
             // if hit, take it
-            id = i32x4::blendv(cur_id, id, mask);
+
+            id = i32x4::blendv(id, cur_id, mask);
             closest_t = f32x4::blendv(best_t, closest_t, mask);
         }
         
@@ -220,7 +223,7 @@ fn hit_simd(world: &World, start: usize, len: usize, r: Ray, t_min: f32, t_max: 
     let min_t = f32x4::hmin(closest_t);
     if min_t < t_max { 
         let min_t_channel = f32x4::cmp_eq(closest_t, f32x4::splat(min_t));
-        let min_t_mask = u32x4::movemask(min_t_channel);
+        let min_t_mask = f32x4::movemask(min_t_channel);
         if min_t_mask != 0 {
             let mut id_scalar : [i32;4] = [0, 0, 0, 0];
             let mut closest_t_scalar : [f32;4] = [0.0, 0.0, 0.0, 0.0];
@@ -312,10 +315,11 @@ impl QBVH {
     fn hit_node(child_idx: usize, hit_any_node: &mut bool, r: Ray, t_min: f32, closest_t: &mut f32, current_node: &QBVHNode, bvh: &QBVH, world: &World, out_hit: &mut HitRecord) {
         let child = &current_node.children[child_idx];
         assert!(!child.is_empty_leaf());
-
+  
         if child.is_leaf() {
             let (c_idx, c_count) = child.leaf_get_idx_count();
-            if hit(world, c_idx as usize, c_count as usize, r, t_min, *closest_t, out_hit) {
+            // if hit(world, c_idx as usize, c_count as usize, r, t_min, *closest_t, out_hit) {
+            if hit_simd(world, c_idx as usize, c_count as usize, r, t_min, *closest_t, out_hit) {
                 *hit_any_node = true;
                 *closest_t = out_hit.t;
             }

@@ -86,10 +86,9 @@ impl f32x4 {
     }}
     
     #[inline(always)]
-    pub fn cmp_eq(a: f32x4, b: f32x4) -> u32x4 {
+    pub fn cmp_eq(a: f32x4, b: f32x4) -> f32x4 {
     unsafe {
-        u32x4 { m: _mm_castps_si128(
-            _mm_cmpeq_ps(a.m, b.m)) }
+        f32x4 { m: _mm_cmpeq_ps(a.m, b.m) }
     }}
    
     #[inline(always)]
@@ -165,6 +164,13 @@ impl f32x4 {
     unsafe {
         _mm_storeu_ps(mem.as_mut_ptr(), v.m)
     }}
+
+    #[inline(always)]
+    pub fn movemask(v: f32x4) -> u32 {
+    unsafe {
+        _mm_movemask_ps(v.m) as u32
+    }
+    }
 }
 
 impl i32x4 {

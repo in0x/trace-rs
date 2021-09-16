@@ -69,8 +69,6 @@ fn sample_color(r: Ray, hit_tree: & dyn Hitable, world: &World, materials: &[Mat
     let mut current_ray = r;
 
     for _bounce in 0..bounces {
-        // if hit_world(current_ray, 0.001, f32::MAX, &bvh.root, bvh, &world, &mut hit) {
-        // if hit_spheres(world, 0, world.sphere_x.len(), current_ray, 0.001, f32::MAX, &mut hit) {
         if hit_tree.hit(current_ray, 0.001, f32::MAX, world, &mut hit) {
             hit.normal = normalized(hit.normal); // The book makes a point about unit length normals but then doesnt enforce it.
             let mat_id = world.material_ids[hit.obj_id] as usize;
@@ -190,37 +188,43 @@ fn push_sphere(objects: &mut Vec<Sphere>, center: Vec3, radius: f32, mat: usize)
     });
 }
 
-fn generate_world_data(objects: &mut Vec<Sphere>, materials: &mut Vec<Material>) {
+fn add_sphere(objects: &mut Vec<Sphere>, materials: &mut Vec<Material>, a: i32, b: i32) {
+    let material_select : f32 = rand_f32();
+    let rand_a : f32 = rand_f32();
+    let rand_b : f32 = rand_f32();
+    let center = vec3![(a as f32) + 0.9 * rand_a, 0.2, (b as f32) + 0.9 * rand_b];
 
+    if length(center - vec3![4.0, 0.2, 0.0]) > 0.9 {
+        if material_select < 0.8 {
+            let albedo = Vec3::random() * Vec3::random();
+            materials.push(Material::Lambert(Lambert{ albedo }));
+            push_sphere(objects, center, 0.2, materials.len() - 1);
+        } 
+        else if material_select < 0.96 {
+            let albedo = Vec3::random_range(0.5, 1.0);
+            let rough = rand_in_range(0.0, 0.5);
+            materials.push(Material::Metal(Metal::new(albedo, rough)));
+            push_sphere(objects, center, 0.2, materials.len() - 1);
+        } 
+        else {
+            materials.push(Material::Dielectric(Dielectric{ idx_of_refraction: 1.5 }));
+            push_sphere(objects, center, 0.2, materials.len() - 1);
+        }
+    }
+}
+
+fn generate_world_data(objects: &mut Vec<Sphere>, materials: &mut Vec<Material>) {
     materials.push(Material::Lambert(Lambert{ albedo: vec3![0.5, 0.5, 0.5] }));
     push_sphere(objects, vec3![0.0, -1000.0, 0.0], 1000.0, materials.len() - 1);
 
     for a in -11..11 {
         for b in -11..11 {
-            let material_select : f32 = rand_f32();
-            let rand_a : f32 = rand_f32();
-            let rand_b : f32 = rand_f32();
-            let center = vec3![(a as f32) + 0.9 * rand_a, 0.2, (b as f32) + 0.9 * rand_b];
-            
-            if length(center - vec3![4.0, 0.2, 0.0]) > 0.9 {
-                if material_select < 0.8 {
-                    let albedo = Vec3::random() * Vec3::random();
-                    materials.push(Material::Lambert(Lambert{ albedo }));
-                    push_sphere(objects, center, 0.2, materials.len() - 1);
-                } 
-                else if material_select < 0.96 {
-                    let albedo = Vec3::random_range(0.5, 1.0);
-                    let rough = rand_in_range(0.0, 0.5);
-                    materials.push(Material::Metal(Metal::new(albedo, rough)));
-                    push_sphere(objects, center, 0.2, materials.len() - 1);
-                } 
-                else {
-                    materials.push(Material::Dielectric(Dielectric{ idx_of_refraction: 1.5 }));
-                    push_sphere(objects, center, 0.2, materials.len() - 1);
-                }
-            }
+            add_sphere(objects, materials, a, b);
         }
     }
+
+    add_sphere(objects, materials, 1, 12);
+    add_sphere(objects, materials, 12, 1);
 
     materials.push(Material::Dielectric(Dielectric{ idx_of_refraction: 1.5 }));
     push_sphere(objects, vec3![0.0, 1.0, 0.0], 1.0, materials.len() - 1);
@@ -230,6 +234,9 @@ fn generate_world_data(objects: &mut Vec<Sphere>, materials: &mut Vec<Material>)
     
     materials.push(Material::Metal(Metal{ albedo: vec3![0.7, 0.6, 0.5], roughness: 0.0 }));
     push_sphere(objects, vec3![4.0, 1.0, 0.0], 1.0, materials.len() - 1);
+
+    assert!(objects.len() == materials.len());
+    assert!((objects.len() % spatial::SIMD_WIDTH) == 0);
 }
 
 struct RGBImage {
