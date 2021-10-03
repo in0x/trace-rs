@@ -20,17 +20,25 @@ impl Ray {
     }
 }
 
+// TODO should this be in spatial.rs?
+// TODO this needs a better name eg RayCastResult
 pub struct HitRecord {
-    pub point: Vec3,
-    pub normal: Vec3,
-    pub obj_id: usize,
-    pub t: f32,
-    pub front_face: bool    
+    pub point:      Vec3,
+    pub normal:     Vec3,
+    pub obj_id:     usize,
+    pub t:          f32,
+    pub front_face: bool,
 }
 
 impl HitRecord {
     pub fn new() -> HitRecord {
-        HitRecord { point: vec3![0.0, 0.0, 0.0], normal: vec3![0.0, 0.0, 0.0], obj_id: 0, t: 0.0, front_face: false}
+        HitRecord { 
+            point: vec3![0.0, 0.0, 0.0], 
+            normal: vec3![0.0, 0.0, 0.0], 
+            obj_id: 0, 
+            t: 0.0, 
+            front_face: false,
+        }
     }
     
     pub fn set_face_and_normal(&mut self, r: Ray, outward_normal: Vec3) {

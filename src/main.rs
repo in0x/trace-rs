@@ -13,6 +13,7 @@ use math::*;
 use collide::*;
 use spatial::*;
 use world::*;
+use core::num;
 use std::time::Instant;
 
 extern crate image;
@@ -78,7 +79,7 @@ fn sample_color(r: Ray, hit_scratch: &mut Vec<spatial::PackedIdx>, bvh: &QBVH, w
                 color *= attenuation;
             }
         } else {
-            color *= get_sky_color(current_ray);
+            color *= get_sky_color(&current_ray);
             break;
         }
     }
@@ -86,7 +87,7 @@ fn sample_color(r: Ray, hit_scratch: &mut Vec<spatial::PackedIdx>, bvh: &QBVH, w
     color
 }
 
-fn get_sky_color(r: Ray) -> Vec3 {
+fn get_sky_color(r: &Ray) -> Vec3 {
     let unit_dir = normalized(r.direction);
     let t = 0.5 * (unit_dir.y + 1.0);
     (1.0 - t) * vec3![1.0, 1.0, 1.0] + t * vec3![0.5, 0.7, 1.0]    
@@ -293,30 +294,145 @@ fn main() {
     println!("Finished setup. Begin rendering...");
     let measure_start = Instant::now();
 
-    let sample_count = 8;
-
     let mut hit_scratch: Vec<spatial::PackedIdx> = Vec::new();
     
-    for row in 0..image.height {
-        for col in 0..image.width {
-            let mut color = vec3![0.0, 0.0, 0.0];
-            for _s in 0..sample_count {
+    let num_pixels = image.height * image.width;
+
+    struct DispatchedRay {
+        ray:      Ray,
+        pixel_id: u32,
+    }
+
+    // Bounced rays can generate more rays, so we need a front
+    // and back buffer to keep track of them.
+    let mut rays_1 = Vec::new();
+    rays_1.reserve(num_pixels);
+    let mut rays_2 = Vec::new();
+    rays_2.reserve(num_pixels);
+
+    let mut collisions = Vec::new();
+    collisions.reserve(num_pixels);
+
+    let mut colors = Vec::new();
+    colors.resize(num_pixels, Vec3::one()); // todo can we write directly to the image instead of here?
+
+    let mut final_colors = Vec::new();
+    final_colors.resize(num_pixels, Vec3::zero());
+
+    struct HitResult {
+        collision_id: u32,
+        did_hit:      bool
+    }
+
+    let mut hit_results = Vec::new();
+    hit_results.reserve(num_pixels);
+
+    let sample_count = 8;
+    for _ in 0..sample_count{
+        rays_1.clear();
+        rays_2.clear();
+        collisions.clear();
+        hit_results.clear();
+
+        // Generate initial ray for each pixel
+        let mut pixel_id = 0;
+        for row in 0..image.height {
+            for col in 0..image.width {
                 let (u_s, v_s) : (f32, f32) = (rand_f32(), rand_f32());
                 let u = (col as f32 + u_s) / image.width as f32;
                 let v = 1.0 - ((row as f32 + v_s) / image.height as f32); // Invert y to align with output from the book.
                 let r = cam.get_ray(u, v);
-                color += sample_color(r, &mut hit_scratch, &bvh, &world, &materials, 50);
+                rays_1.push( DispatchedRay {
+                    ray: r,
+                    pixel_id
+                });
+
+                pixel_id += 1;
             }
+        }
+
+        // TODO sort by hit id to get better material i-cache utilisation?
+
+        let rays_IN = &mut rays_1;
+        let rays_OUT = &mut rays_2;
+
+        let max_num_bounce = 50;
+        for _ in 0..max_num_bounce  {
+            let num_rays_to_eval = rays_IN.len();
             
+            rays_OUT.clear();
+            collisions.clear();
+            hit_results.clear();
+
+            for i in 0..num_rays_to_eval {    
+                let mut hit_record = HitRecord::new();
+
+                let did_hit = QBVH::hit_qbvh(&bvh, rays_IN[i].ray, 0.001, f32::MAX, &world, &mut hit_scratch, &mut hit_record); 
+                if did_hit{
+                    collisions.push(hit_record);
+                }
+
+                let collision_id = {
+                    let signed_idx = collisions.len() as i32;
+                    std::cmp::max(signed_idx - 1, 0) as u32
+                };
+                    
+                hit_results.push(HitResult {
+                    collision_id,
+                    did_hit});
+            }
+
+            let num_hits = hit_results.len();
+            for i in 0..num_hits {
+                let result = &hit_results[i];
+                let dispatch = &rays_IN[i];
+
+                if result.did_hit {
+                    let collision  = &collisions[result.collision_id as usize];
+                    let mat_id = world.material_ids[collision.obj_id] as usize;
+                    let (did_bounce, attenuation, scattered) = materials[mat_id].scatter(&dispatch.ray, collision);
+                    
+                    if did_bounce {
+                        rays_OUT.push(DispatchedRay {
+                            ray: scattered,
+                            pixel_id: dispatch.pixel_id
+                        });
+                    }
+                    colors[dispatch.pixel_id as usize] *= attenuation; // should this be inside did_bounce?
+                    
+                } else {
+                    colors[dispatch.pixel_id as usize] *= get_sky_color(&dispatch.ray);
+                }
+            }
+
+            std::mem::swap(rays_IN, rays_OUT);
+        }
+
+        for i in 0..num_pixels {
+            final_colors[i] += colors[i];
+            colors[i].x = 1.0;
+            colors[i].z = 1.0;
+            colors[i].y = 1.0;
+        }
+    }
+
+    // run this step once at the end
+
+    let mut idx = 0;
+    for row in 0..image.height {
+        for col in 0..image.width {
+            let mut color = final_colors[idx];
             color *= 1.0 / sample_count as f32; // Average over samples            
             color.x = 256.0 * clamp(color.x.sqrt(), 0.0, 0.999); // Gamma2 correct and move to range 0 <-> 255.
             color.y = 256.0 * clamp(color.y.sqrt(), 0.0, 0.999);
             color.z = 256.0 * clamp(color.z.sqrt(), 0.0, 0.999);
             
             image.set_pixel(row, col, color);
-        }
-    }
 
+            idx += 1;
+        }
+    }    
+    
     let measure_end = Instant::now();
     let render_duration = measure_end - measure_start;
 

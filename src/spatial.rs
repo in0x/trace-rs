@@ -162,9 +162,8 @@ impl QBVHNode {
 
 pub const SIMD_WIDTH: usize = 4;
 
-fn hit_simd(world: &World, start: usize, len: usize, r: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {
-    assert!((len % SIMD_WIDTH) == 0);
-    
+#[inline(never)]
+fn hit_simd(world: &World, start: usize, len: usize, r: Ray, t_min: f32, t_max: f32, out_hit: &mut HitRecord) -> bool {    
     let ro_x = f32x4::splat(r.origin.x);
     let ro_y = f32x4::splat(r.origin.y);
     let ro_z = f32x4::splat(r.origin.z);
@@ -181,7 +180,9 @@ fn hit_simd(world: &World, start: usize, len: usize, r: Ray, t_min: f32, t_max: 
     let first_idx = start as i32;
     let mut cur_id = i32x4::set(first_idx, first_idx + 1, first_idx + 2, first_idx + 3);
 
-    let end = start + len - (len % SIMD_WIDTH);
+    // let end = start + len - (len % SIMD_WIDTH);
+    assert!((len % SIMD_WIDTH) == 0);
+    let end = start + len;
     for i in (start..end).step_by(SIMD_WIDTH) {    
         let sc_x = f32x4::loadu(&world.sphere_x[i..i+4]);
         let sc_y = f32x4::loadu(&world.sphere_y[i..i+4]);
@@ -199,7 +200,11 @@ fn hit_simd(world: &World, start: usize, len: usize, r: Ray, t_min: f32, t_max: 
         let nb = f32x4::add(f32x4::add(f32x4::mul(co_x, rd_x), f32x4::mul(co_y, rd_y)), f32x4::mul(co_z, rd_z));
         let c  = f32x4::sub(f32x4::add(f32x4::add(f32x4::mul(co_x, co_x), f32x4::mul(co_y, co_y)), f32x4::mul(co_z, co_z)), sq_radius);
 
-        let discr = f32x4::sub(f32x4::mul(nb, nb), f32x4::mul(a, c));
+        let discr = {
+            let nb_2 = f32x4::mul(nb, nb);
+            let a_mul_c = f32x4::mul(a, c);
+            f32x4::sub(nb_2, a_mul_c)
+        };
         let discr_gt_0 = f32x4::cmp_gt(discr, zero_4);
 
         // See if any of the four spheres have a solution.
@@ -397,6 +402,7 @@ impl QBVH {
             if next_node.is_leaf() {
                 let (c_idx, c_count) = next_node.leaf_get_idx_count();
                 if hit_simd(world, c_idx as usize, c_count as usize, r, t_min, closest_t, out_hit) {
+                // if hit(world, c_idx as usize, c_count as usize, r, t_min, closest_t, out_hit) {
                     hit_any_node = true;
                     closest_t = out_hit.t;
                 }
